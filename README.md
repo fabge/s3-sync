@@ -20,14 +20,6 @@ The plugin performs bi-directional vault sync against a single AWS S3 bucket. It
 
 That lets it detect uploads, downloads, deletions, and conflicts without a separate remote manifest.
 
-## What it does not do
-
-- No remote-provider abstraction
-- No backup snapshots
-- No encrypted payload mode
-- No configurable bucket prefix
-- No compatibility promise with older bucket layouts from previous forks
-
 ## Settings
 
 The settings surface is intentionally small:
