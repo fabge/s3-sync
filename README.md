@@ -25,7 +25,7 @@ That lets it detect uploads, downloads, deletions, and conflicts without a separ
 - No remote-provider abstraction
 - No backup snapshots
 - No encrypted payload mode
-- No remote-prefix UX beyond the internal empty-prefix default
+- No configurable bucket prefix
 - No compatibility promise with older bucket layouts from previous forks
 
 ## Settings
@@ -42,7 +42,6 @@ The settings surface is intentionally small:
 - Sync on startup
 - Protect-modify percentage
 - Exclude patterns
-- Debug logging
 
 The plugin always excludes its own folder from sync:
 
@@ -61,7 +60,7 @@ You resolve the conflict manually, keep the final file you want, and sync again.
 
 ## Bucket layout
 
-Files are stored directly in the configured bucket/prefix as normal S3 objects. Custom metadata is used for sync bookkeeping such as:
+Files are stored directly at the bucket root as normal S3 objects. Custom metadata is used for sync bookkeeping such as:
 
 - content fingerprint
 - client mtime
@@ -71,8 +70,6 @@ Files are stored directly in the configured bucket/prefix as normal S3 objects. 
 ## Commands
 
 - **Sync now**
-- **Pause sync**
-- **Resume sync**
 - **Open settings**
 
 ## Development
@@ -83,9 +80,3 @@ npm run lint
 npm run build
 npm test
 ```
-
-## Credits
-
-This plugin is derived from [obsidian-s3-sync-and-backup](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup)
-by Ceilão Labs, with the encryption and backup features removed and the storage
-layer narrowed to AWS S3. See `LICENSE-ceilaolabs` for the original copyright.
