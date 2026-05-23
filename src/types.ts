@@ -16,7 +16,6 @@ export interface S3SyncSettings {
 	syncOnStartup: boolean;
 	excludePatterns: string[];
 	protectModifyPercentage: number;
-	deviceId: string;
 }
 
 export const DEFAULT_SETTINGS: S3SyncSettings = {
@@ -31,7 +30,6 @@ export const DEFAULT_SETTINGS: S3SyncSettings = {
 	syncOnStartup: true,
 	excludePatterns: ['**/workspace*', '.trash/**'],
 	protectModifyPercentage: 50,
-	deviceId: '',
 };
 
 export type VaultFileKind = 'text' | 'binary';

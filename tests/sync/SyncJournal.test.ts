@@ -1,7 +1,7 @@
 /**
  * Unit tests for SyncJournal.
  *
- * Covers the v2 IndexedDB schema, CRUD operations for each store, metadata,
+ * Covers schema creation, CRUD operations for each store, metadata,
  * transaction-based clearing, and initialization/close lifecycle behavior.
  */
 
@@ -23,9 +23,7 @@ interface MockJournalDatabase {
 	getAll: jest.Mock<Promise<Array<ConflictRecord | SyncStateRecord>>, ['stateRecords' | 'conflicts']>;
 	transaction: jest.Mock<MockTransaction, [StoreName[], 'readwrite']>;
 	close: jest.Mock<void, []>;
-	objectStoreNames: DOMStringList;
 	createObjectStore: jest.Mock<void, [StoreName, { keyPath: 'path' }?]>;
-	deleteObjectStore: jest.Mock<void, [string]>;
 }
 
 interface MockTransaction {
@@ -35,6 +33,7 @@ interface MockTransaction {
 
 interface MockObjectStore {
 	clear: jest.Mock<Promise<void>, []>;
+	put: jest.Mock<Promise<void>, [MetadataValue, string?]>;
 }
 
 interface MockDatabaseContext {
@@ -75,20 +74,6 @@ function createConflictRecord(overrides: Partial<ConflictRecord> = {}): Conflict
 	};
 }
 
-function createObjectStoreNames(storeNames: string[]): DOMStringList {
-	const values = new Set(storeNames);
-	const domStringListLike = {
-		contains: jest.fn((name: string) => values.has(name)),
-		item: jest.fn((_index: number) => null),
-		length: values.size,
-		[Symbol.iterator]: function* iterator(): IterableIterator<string> {
-			yield* values;
-		},
-	};
-
-	return domStringListLike as unknown as DOMStringList;
-}
-
 function createMockDatabase(): MockDatabaseContext {
 	const stateRecords = new Map<string, SyncStateRecord>();
 	const conflicts = new Map<string, ConflictRecord>();
@@ -99,15 +84,20 @@ function createMockDatabase(): MockDatabaseContext {
 			clear: jest.fn(async () => {
 				stateRecords.clear();
 			}),
+			put: jest.fn(async (_value: MetadataValue, _key?: string) => undefined),
 		},
 		conflicts: {
 			clear: jest.fn(async () => {
 				conflicts.clear();
 			}),
+			put: jest.fn(async (_value: MetadataValue, _key?: string) => undefined),
 		},
 		metadata: {
 			clear: jest.fn(async () => {
 				metadata.clear();
+			}),
+			put: jest.fn(async (value: MetadataValue, key?: string) => {
+				metadata.set(key ?? '', value);
 			}),
 		},
 	};
@@ -162,9 +152,7 @@ function createMockDatabase(): MockDatabaseContext {
 		}),
 		transaction: jest.fn((_storeNames: StoreName[], _mode: 'readwrite') => tx),
 		close: jest.fn(),
-		objectStoreNames: createObjectStoreNames([]),
 		createObjectStore: jest.fn(),
-		deleteObjectStore: jest.fn(),
 	};
 
 	return {
@@ -196,7 +184,7 @@ describe('SyncJournal', () => {
 	});
 
 	describe('initialize', () => {
-		it('opens the v2 journal database using the vault-specific name', async () => {
+		it('opens the journal database using the vault-specific name', async () => {
 			const { db } = createMockDatabase();
 			jest.mocked(openDB).mockResolvedValue(db as never);
 
@@ -205,14 +193,14 @@ describe('SyncJournal', () => {
 
 			expect(openDB).toHaveBeenCalledWith(
 				'obsidian-s3-sync-journal-MyVault',
-				2,
+				1,
 				expect.objectContaining({
 					upgrade: expect.any(Function),
 				}),
 			);
 		});
 
-		it('deletes the legacy entries store and creates all v2 stores during upgrade', async () => {
+		it('creates all journal stores during upgrade', async () => {
 			const { db } = createMockDatabase();
 			jest.mocked(openDB).mockResolvedValue(db as never);
 
@@ -221,37 +209,13 @@ describe('SyncJournal', () => {
 
 			const options = jest.mocked(openDB).mock.calls[0]?.[2];
 			const upgradeDb = {
-				objectStoreNames: createObjectStoreNames(['entries']),
-				deleteObjectStore: jest.fn(),
 				createObjectStore: jest.fn(),
 			};
 
-			options?.upgrade?.(upgradeDb as never, 1, 2, {} as never, {} as never);
-
-			expect(upgradeDb.deleteObjectStore).toHaveBeenCalledWith('entries');
+			options?.upgrade?.(upgradeDb as never, 0, 1, {} as never, {} as never);
 			expect(upgradeDb.createObjectStore).toHaveBeenNthCalledWith(1, 'stateRecords', { keyPath: 'path' });
 			expect(upgradeDb.createObjectStore).toHaveBeenNthCalledWith(2, 'conflicts', { keyPath: 'path' });
 			expect(upgradeDb.createObjectStore).toHaveBeenNthCalledWith(3, 'metadata');
-		});
-
-		it('does not recreate stores that already exist during upgrade', async () => {
-			const { db } = createMockDatabase();
-			jest.mocked(openDB).mockResolvedValue(db as never);
-
-			const journal = new SyncJournal('ExistingVault');
-			await journal.initialize();
-
-			const options = jest.mocked(openDB).mock.calls[0]?.[2];
-			const upgradeDb = {
-				objectStoreNames: createObjectStoreNames(['stateRecords', 'conflicts', 'metadata']),
-				deleteObjectStore: jest.fn(),
-				createObjectStore: jest.fn(),
-			};
-
-			options?.upgrade?.(upgradeDb as never, 1, 2, {} as never, {} as never);
-
-			expect(upgradeDb.deleteObjectStore).not.toHaveBeenCalled();
-			expect(upgradeDb.createObjectStore).not.toHaveBeenCalled();
 		});
 	});
 
@@ -272,6 +236,7 @@ describe('SyncJournal', () => {
 			await expect(journal.getMetadata('engineVersion')).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.setMetadata('engineVersion', 2)).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.clear()).rejects.toThrow(/SyncJournal not initialized/);
+			await expect(journal.resetForDestination('destination')).rejects.toThrow(/SyncJournal not initialized/);
 		});
 
 		it('allows close to be called safely before initialization', () => {
@@ -379,6 +344,30 @@ describe('SyncJournal', () => {
 			expect(stateRecords.size).toBe(0);
 			expect(conflicts.size).toBe(0);
 			expect(metadata.size).toBe(0);
+		});
+	});
+
+	describe('resetForDestination', () => {
+		it('clears state and conflict stores, then records the new destination fingerprint', async () => {
+			const { journal, stateRecords, conflicts, metadata, tx, storeHandles } = await initializeJournal();
+			stateRecords.set('notes/example.md', createStateRecord());
+			conflicts.set('notes/conflict.md', createConflictRecord());
+			metadata.set('lastSuccessfulSyncAt', 123);
+
+			await journal.resetForDestination('bucket:region');
+
+			expect(tx.objectStore).toHaveBeenNthCalledWith(1, 'stateRecords');
+			expect(tx.objectStore).toHaveBeenNthCalledWith(2, 'conflicts');
+			expect(tx.objectStore).toHaveBeenNthCalledWith(3, 'metadata');
+			expect(tx.objectStore).toHaveBeenNthCalledWith(4, 'metadata');
+			expect(storeHandles.stateRecords.clear).toHaveBeenCalledTimes(1);
+			expect(storeHandles.conflicts.clear).toHaveBeenCalledTimes(1);
+			expect(storeHandles.metadata.clear).toHaveBeenCalledTimes(1);
+			expect(storeHandles.metadata.put).toHaveBeenCalledWith('bucket:region', 'destinationFingerprint');
+			expect(stateRecords.size).toBe(0);
+			expect(conflicts.size).toBe(0);
+			expect(metadata.size).toBe(1);
+			expect(metadata.get('destinationFingerprint')).toBe('bucket:region');
 		});
 	});
 

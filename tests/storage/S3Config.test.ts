@@ -19,7 +19,6 @@ function createTestSettings(
 		syncOnStartup: true,
 		excludePatterns: [],
 		protectModifyPercentage: 50,
-		deviceId: 'device-123',
 		...overrides,
 	};
 }

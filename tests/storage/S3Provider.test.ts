@@ -19,7 +19,6 @@ function createSettings(overrides: Partial<S3SyncSettings> = {}): S3SyncSettings
 		syncOnStartup: false,
 		excludePatterns: [],
 		protectModifyPercentage: 100,
-		deviceId: 'test-device',
 		...overrides,
 	};
 }
@@ -55,12 +54,39 @@ describe('S3Provider', () => {
 		expect(command.input.IfMatch).toBe('"abc123"');
 	});
 
+	it('normalizes weak ETags for conditional uploads and responses', async () => {
+		const provider = new S3Provider(createSettings());
+		const send = jest.fn().mockResolvedValue({ ETag: 'W/"returned-etag"' });
+		(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+		const etag = await provider.uploadFile('vault/test.md', 'hello', {
+			ifMatch: 'W/"abc123"',
+		});
+
+		const command = send.mock.calls[0][0] as PutObjectCommand;
+		expect(command.input.IfMatch).toBe('"abc123"');
+		expect(etag).toBe('returned-etag');
+	});
+
 	describe('downloadFileAsTextWithEtag', () => {
 		it('returns text content and cleaned ETag', async () => {
 			const provider = new S3Provider(createSettings());
 			const send = jest.fn().mockResolvedValue({
 				Body: new TextEncoder().encode('hello world'),
 				ETag: '"abc123"',
+			});
+			(provider as unknown as { client: { send: typeof send } }).client = { send };
+
+			const result = await provider.downloadFileAsTextWithEtag('vault/test.md');
+
+			expect(result).toEqual({ text: 'hello world', etag: 'abc123' });
+		});
+
+		it('strips weak ETag prefixes from responses', async () => {
+			const provider = new S3Provider(createSettings());
+			const send = jest.fn().mockResolvedValue({
+				Body: new TextEncoder().encode('hello world'),
+				ETag: 'W/"abc123"',
 			});
 			(provider as unknown as { client: { send: typeof send } }).client = { send };
 

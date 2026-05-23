@@ -37,6 +37,7 @@ import {
     ListObjectsV2CommandOutput,
 } from '@aws-sdk/client-s3';
 import { PayloadFormat, S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncSettings } from '../types';
+import { normalizeEntityTag } from '../utils/etags';
 import { buildS3ClientConfig, validateConnectionSettings } from './S3Config';
 
 /**
@@ -432,7 +433,7 @@ export class S3Provider {
         const metadata = response.Metadata ?? {};
 
         return {
-            etag: response.ETag?.replace(/"/g, '') || '',
+            etag: normalizeEntityTag(response.ETag),
             size: response.ContentLength || 0,
             lastModified: response.LastModified?.getTime() || 0,
             syncVersion: this.parseMetadataNumber(metadata['obsidian-sync-version']),
@@ -498,7 +499,7 @@ export class S3Provider {
 
             return {
                 text: new TextDecoder().decode(bytes),
-                etag: response.ETag?.replace(/"/g, '') ?? null,
+                etag: normalizeEntityTag(response.ETag) || null,
             };
         } catch (error) {
             const err = error as Error & { name?: string };
@@ -571,8 +572,7 @@ export class S3Provider {
             Metadata: metadata,
         }));
 
-		// Return cleaned ETag (remove quotes)
-		return response.ETag?.replace(/"/g, '') || '';
+		return normalizeEntityTag(response.ETag);
 	}
 
 	/**
@@ -597,11 +597,11 @@ export class S3Provider {
 			return undefined;
 		}
 
-		if (etag === '*' || etag.startsWith('"') || etag.startsWith('W/"')) {
+		if (etag === '*') {
 			return etag;
 		}
 
-		return `"${etag}"`;
+		return `"${normalizeEntityTag(etag)}"`;
 	}
 
     /**
@@ -708,8 +708,7 @@ export class S3Provider {
                 Bucket: this.settings.bucket,
                 Key: key,
             }));
-            // Return cleaned ETag (remove quotes)
-            return response.ETag?.replace(/"/g, '') || null;
+            return normalizeEntityTag(response.ETag) || null;
         } catch (error) {
             const err = error as Error & { name?: string };
             if (err.name === 'NoSuchKey' || err.name === 'NotFound') {
@@ -742,7 +741,7 @@ export class S3Provider {
                 key,
                 size: response.ContentLength || 0,
                 lastModified: response.LastModified || new Date(),
-                etag: response.ETag?.replace(/"/g, ''),
+                etag: normalizeEntityTag(response.ETag),
             };
         } catch (error) {
             const err = error as Error & { name?: string };

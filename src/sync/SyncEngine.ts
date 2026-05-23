@@ -1,5 +1,5 @@
 /**
- * Sync Engine Module (v2)
+ * Sync Engine Module
  *
  * Thin orchestrator that coordinates the three-way reconciliation sync:
  *   1. Acquire mutex (prevent concurrent syncs)
@@ -22,6 +22,19 @@ import { SyncPayloadCodec } from './SyncPayloadCodec';
 import { SyncPlanner } from './SyncPlanner';
 import { SyncExecutor } from './SyncExecutor';
 import { ChangeTracker } from './ChangeTracker';
+import { computeDestinationFingerprint } from './DestinationFingerprint';
+
+const DESTINATION_FINGERPRINT_KEY = 'destinationFingerprint';
+const LAST_SUCCESSFUL_SYNC_KEY = 'lastSuccessfulSyncAt';
+
+async function withJournalContext<T>(phase: string, operation: () => Promise<T>): Promise<T> {
+	try {
+		return await operation();
+	} catch (error) {
+		const cause = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed ${phase}: ${cause}`);
+	}
+}
 
 /**
  * SyncEngine — orchestrates a complete sync cycle.
@@ -66,6 +79,9 @@ export class SyncEngine {
 	/**
 	 * Update runtime settings (e.g. after the user changes them in the settings tab).
 	 *
+	 * `deviceId` intentionally stays outside the settings object because it is
+	 * a vault-local installation identity, not a user-configurable preference.
+	 *
 	 * @param settings - The new settings snapshot.
 	 */
 	updateSettings(settings: S3SyncSettings): void {
@@ -96,6 +112,12 @@ export class SyncEngine {
 		this.changeTracker.setSyncInProgress(true);
 
 		try {
+			const startFingerprint = computeDestinationFingerprint(this.settings);
+			const destinationGuardResult = await this.reconcileDestinationFingerprint(startFingerprint);
+			if (destinationGuardResult) {
+				return destinationGuardResult;
+			}
+
 			// Phase 1 — Plan
 			const planner = new SyncPlanner(
 				this.app,
@@ -107,6 +129,15 @@ export class SyncEngine {
 			);
 			const inScopeFileCount = await planner.countInScopeLocalFiles();
 			const plan = await planner.buildPlan();
+			if (computeDestinationFingerprint(this.settings) !== startFingerprint) {
+				return this.buildBlockedResult(
+					'Aborted: destination changed during sync. The pending sync was discarded; run sync again after saving the new bucket or region.',
+				);
+			}
+			const destructivePlanError = await this.checkDestructivePlan(plan);
+			if (destructivePlanError) {
+				return this.buildBlockedResult(destructivePlanError, 'delete-local');
+			}
 			this.assertProtectModifyThreshold(plan, inScopeFileCount);
 
 			// Phase 2 — Execute
@@ -123,7 +154,7 @@ export class SyncEngine {
 
 			// Phase 3 — Persist metadata
 			if (result.success) {
-				await this.journal.setMetadata('lastSuccessfulSyncAt', Date.now());
+				await this.journal.setMetadata(LAST_SUCCESSFUL_SYNC_KEY, Date.now());
 			}
 
 			return result;
@@ -153,6 +184,14 @@ export class SyncEngine {
 		}
 	}
 
+	async resetJournalForCurrentDestination(): Promise<void> {
+		const fingerprint = computeDestinationFingerprint(this.settings);
+		await withJournalContext(
+			'resetting sync journal for the current destination',
+			() => this.journal.resetForDestination(fingerprint),
+		);
+	}
+
 	private assertProtectModifyThreshold(
 		plan: SyncPlanItem[],
 		inScopeFileCount: number,
@@ -172,5 +211,66 @@ export class SyncEngine {
 				`Aborting sync: ${riskyActionCount} of ${inScopeFileCount} in-scope files would change (${riskyPercentage.toFixed(1)}%), exceeding the ${threshold}% protection threshold.`,
 			);
 		}
+	}
+
+	private async reconcileDestinationFingerprint(current: string): Promise<SyncResult | null> {
+		const stored = await withJournalContext(
+			'reading stored destination fingerprint',
+			() => this.journal.getMetadata(DESTINATION_FINGERPRINT_KEY),
+		);
+
+		if (stored === current) {
+			return null;
+		}
+
+		if (stored === undefined) {
+			await withJournalContext(
+				'recording destination fingerprint',
+				() => this.journal.setMetadata(DESTINATION_FINGERPRINT_KEY, current),
+			);
+			return null;
+		}
+
+		return this.buildBlockedResult(
+			'Destination changed since this journal was created. Review the bucket and region, then use "Reset sync journal" in Advanced settings before syncing this destination.',
+		);
+	}
+
+	private async checkDestructivePlan(plan: SyncPlanItem[]): Promise<string | null> {
+		const deleteLocalCount = plan.filter((item) => item.action === 'delete-local').length;
+		if (deleteLocalCount === 0) {
+			return null;
+		}
+
+		const hasPriorSuccess = (await withJournalContext(
+			'reading the last successful sync timestamp',
+			() => this.journal.getMetadata(LAST_SUCCESSFUL_SYNC_KEY),
+		)) !== undefined;
+
+		if (hasPriorSuccess) {
+			return null;
+		}
+
+		return `Aborted: destructive plan blocked. ${deleteLocalCount} local file(s) would be deleted for a destination with no recorded successful sync history. Verify the bucket and region, then reset the sync journal if you intentionally want to start fresh.`;
+	}
+
+	private buildBlockedResult(
+		message: string,
+		action: SyncPlanItem['action'] = 'skip',
+	): SyncResult {
+		const now = Date.now();
+		console.error(`[S3 Sync] ${message}`);
+		return {
+			success: false,
+			startedAt: now,
+			completedAt: now,
+			filesUploaded: 0,
+			filesDownloaded: 0,
+			filesDeleted: 0,
+			filesAdopted: 0,
+			filesForgotten: 0,
+			conflicts: [],
+			errors: [{ path: '', action, message, recoverable: false }],
+		};
 	}
 }

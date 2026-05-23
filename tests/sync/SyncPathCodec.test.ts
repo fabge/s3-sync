@@ -89,32 +89,4 @@ describe('SyncPathCodec', () => {
 		});
 	});
 
-	describe('getMetadataDir', () => {
-		it('returns the metadata directory key with the configured prefix', () => {
-			const codec = new SyncPathCodec('vault');
-
-			expect(codec.getMetadataDir()).toBe(`vault/${metadataDir}`);
-		});
-
-		it('returns the metadata directory key without a prefix', () => {
-			const codec = new SyncPathCodec('');
-
-			expect(codec.getMetadataDir()).toBe(metadataDir);
-		});
-	});
-
-	describe('getEngineMarkerKey', () => {
-		it('returns the engine marker path with the configured prefix', () => {
-			const codec = new SyncPathCodec('vault');
-
-			expect(codec.getEngineMarkerKey()).toBe(`vault/${metadataDir}/engine.json`);
-		});
-
-		it('returns the engine marker path without a prefix', () => {
-			const codec = new SyncPathCodec('');
-
-			expect(codec.getEngineMarkerKey()).toBe(`${metadataDir}/engine.json`);
-		});
-	});
-
 });

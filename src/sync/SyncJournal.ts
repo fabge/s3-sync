@@ -1,29 +1,13 @@
 /**
- * Provides the IndexedDB persistence layer for the v2 sync engine's per-file baselines.
+ * Provides the IndexedDB persistence layer for per-file sync baselines.
  *
- * ## Why this exists
  * Three-way reconciliation requires each device to remember the last-known-good state for
- * every file it has successfully synced.  That "baseline" is what lets the engine distinguish
+ * every file it has successfully synced. That baseline is what lets the engine distinguish
  * "this file changed locally since the last sync" from "I never synced this file before".
  * Without it the engine would have to treat every file as new on every run.
  *
- * ## Schema (DB_VERSION = 2)
  * The database name is vault-scoped (`obsidian-s3-sync-journal-{vaultName}`) so that separate
  * Obsidian vaults stored in the same bucket do not share state.
- *
- * Three object stores:
- *
- * | Store          | Key                      | Purpose                                              |
- * |----------------|--------------------------|------------------------------------------------------|
- * | `stateRecords` | vault-relative file path | Per-file sync baseline (mtime, size, SHA-256, etag)  |
- * | `conflicts`    | vault-relative file path | Unresolved conflict records pending user resolution  |
- * | `metadata`     | arbitrary string key     | Plugin-level key/value pairs (e.g. last sync time)   |
- *
- * ## v1 → v2 migration
- * Version 1 stored everything in a single `entries` object store.  Version 2 splits the data
- * into the three specialised stores above.  The `upgrade` callback in {@link SyncJournal.initialize}
- * drops the legacy `entries` store if present so the old data is not carried forward — a fresh
- * full sync repopulates the baselines from actual S3 state.
  */
 
 import { DBSchema, IDBPDatabase, openDB } from 'idb';
@@ -37,6 +21,8 @@ import { ConflictRecord, SyncStateRecord } from '../types';
  * objects in what is intentionally a flat key/value bag.
  */
 type SyncJournalMetadataValue = string | number | boolean;
+
+const DESTINATION_FINGERPRINT_KEY = 'destinationFingerprint';
 
 /**
  * Typed schema definition consumed by the `idb` library for compile-time type safety.
@@ -67,14 +53,7 @@ interface SyncJournalDB extends DBSchema {
 /** Common prefix for the IndexedDB database name; the vault name is appended at runtime. */
 const DB_NAME_PREFIX = 'obsidian-s3-sync-journal';
 
-/**
- * Current IndexedDB schema version.
- *
- * Bump this whenever an object store is added, removed, or has its key path changed.
- * Version 2 reflects the migration that replaced the v1 `entries` store with the three
- * purpose-specific stores (`stateRecords`, `conflicts`, `metadata`).
- */
-const DB_VERSION = 2;
+const DB_VERSION = 1;
 
 /**
  * Vault-scoped IndexedDB journal that persists per-file sync baselines, unresolved conflict
@@ -100,9 +79,7 @@ export class SyncJournal {
 	/**
 	 * Initializes the IndexedDB journal for the current vault.
 	 *
-	 * Opens (or creates) the database, running any necessary schema upgrades.
-	 * The `upgrade` callback handles both the initial creation of the three object stores
-	 * and the v1→v2 migration that removes the legacy `entries` store.
+	 * Opens (or creates) the database and creates the journal stores on first use.
 	 *
 	 * Must be called once before any read/write operations.
 	 *
@@ -111,26 +88,9 @@ export class SyncJournal {
 	async initialize(): Promise<void> {
 		this.db = await openDB<SyncJournalDB>(`${DB_NAME_PREFIX}-${this.vaultName}`, DB_VERSION, {
 			upgrade(db) {
-				const legacyDatabase = db as unknown as {
-					objectStoreNames: DOMStringList;
-					deleteObjectStore(name: string): void;
-				};
-
-				if (legacyDatabase.objectStoreNames.contains('entries')) {
-					legacyDatabase.deleteObjectStore('entries');
-				}
-
-				if (!db.objectStoreNames.contains('stateRecords')) {
-					db.createObjectStore('stateRecords', { keyPath: 'path' });
-				}
-
-				if (!db.objectStoreNames.contains('conflicts')) {
-					db.createObjectStore('conflicts', { keyPath: 'path' });
-				}
-
-				if (!db.objectStoreNames.contains('metadata')) {
-					db.createObjectStore('metadata');
-				}
+				db.createObjectStore('stateRecords', { keyPath: 'path' });
+				db.createObjectStore('conflicts', { keyPath: 'path' });
+				db.createObjectStore('metadata');
 			},
 		});
 	}
@@ -267,6 +227,18 @@ export class SyncJournal {
 			tx.objectStore('stateRecords').clear(),
 			tx.objectStore('conflicts').clear(),
 			tx.objectStore('metadata').clear(),
+		]);
+		await tx.done;
+	}
+
+	async resetForDestination(destinationFingerprint: string): Promise<void> {
+		this.ensureInitialized();
+		const tx = this.db!.transaction(['stateRecords', 'conflicts', 'metadata'], 'readwrite');
+		await Promise.all([
+			tx.objectStore('stateRecords').clear(),
+			tx.objectStore('conflicts').clear(),
+			tx.objectStore('metadata').clear(),
+			tx.objectStore('metadata').put(destinationFingerprint, DESTINATION_FINGERPRINT_KEY),
 		]);
 		await tx.done;
 	}

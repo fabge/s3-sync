@@ -63,6 +63,15 @@ export class Plugin {
 export class App {
     vault!: Vault;
     workspace!: Workspace;
+    private localStorage = new Map<string, unknown>();
+
+    loadLocalStorage(key: string): unknown {
+        return this.localStorage.get(key) ?? null;
+    }
+
+    saveLocalStorage(key: string, value: unknown): void {
+        this.localStorage.set(key, value);
+    }
 }
 
 export class Vault {

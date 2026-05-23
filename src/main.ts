@@ -10,6 +10,7 @@ import { SyncPayloadCodec } from './sync/SyncPayloadCodec';
 import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
 import { registerPluginCommands } from './commands';
+import { getOrCreateDeviceId } from './deviceId';
 
 export default class S3SyncPlugin extends Plugin {
 	settings!: S3SyncSettings;
@@ -26,10 +27,7 @@ export default class S3SyncPlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		if (!this.settings.deviceId) {
-			this.settings.deviceId = crypto.randomUUID();
-			await this.saveData(this.settings);
-		}
+		const deviceId = getOrCreateDeviceId(this.app);
 
 		this.s3Provider = new S3Provider(this.settings);
 		this.statusBar = new StatusBar(this);
@@ -53,7 +51,7 @@ export default class S3SyncPlugin extends Plugin {
 			this.payloadCodec,
 			this.changeTracker,
 			this.settings,
-			this.settings.deviceId,
+			deviceId,
 		);
 
 		this.syncScheduler = new SyncScheduler(this, this.syncEngine, this.settings);
@@ -79,6 +77,11 @@ export default class S3SyncPlugin extends Plugin {
 					conflictCount: result.conflicts.length,
 					lastError: result.errors[0]?.message ?? null,
 				});
+
+				const nonRecoverableError = result.errors.find((error) => !error.recoverable);
+				if (nonRecoverableError) {
+					new Notice(nonRecoverableError.message, 15_000);
+				}
 			},
 			onSyncError: (error) => {
 				this.statusBar?.updateSyncState({
@@ -180,6 +183,20 @@ export default class S3SyncPlugin extends Plugin {
 	private restartSyncServices(): void {
 		this.stopSyncServices();
 		this.startSyncServices();
+	}
+
+	async resetSyncJournal(): Promise<void> {
+		if (!this.syncEngine || !this.changeTracker) {
+			throw new Error('Sync engine is not initialized yet.');
+		}
+
+		if (this.syncEngine.isInProgress()) {
+			throw new Error('Cannot reset the sync journal while a sync is in progress.');
+		}
+
+		await this.syncEngine.resetJournalForCurrentDestination();
+		this.changeTracker.clearAll();
+		this.updateStatusBarFromSettings();
 	}
 
 	async triggerManualSync(): Promise<void> {

@@ -18,6 +18,7 @@ import {
 	SyncPlanItem,
 	SyncStateRecord,
 } from '../types';
+import { normalizeEntityTag } from '../utils/etags';
 import { isConflictFile, matchesAnyGlob, getFilename, isPluginOwnPath } from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 import { SyncJournal } from './SyncJournal';
@@ -176,7 +177,7 @@ export class SyncPlanner {
 
 			if (item.action !== 'skip') {
 				if (ctx.remote?.objectInfo.etag) {
-					item.expectedRemoteEtag = ctx.remote.objectInfo.etag.replace(/"/g, '');
+					item.expectedRemoteEtag = normalizeEntityTag(ctx.remote.objectInfo.etag);
 				}
 				if (!ctx.remote) {
 					item.expectRemoteAbsent = true;
@@ -235,7 +236,7 @@ export class SyncPlanner {
 
 			const ctx = this.getOrCreate(contexts, localPath);
 			ctx.remote = {
-				objectInfo: { ...obj, etag: obj.etag?.replace(/"/g, '') },
+				objectInfo: { ...obj, etag: normalizeEntityTag(obj.etag) },
 			};
 		}
 

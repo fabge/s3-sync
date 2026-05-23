@@ -206,5 +206,21 @@ export class S3SyncSettingTab extends PluginSettingTab {
 					this.plugin.onSettingsChanged();
 				});
 			});
+
+		new Setting(containerEl)
+			.setName('Reset sync journal')
+			.setDesc('Clears remembered sync baselines for the current bucket and region. Use this after intentionally switching destinations.')
+			.addButton((button) => {
+				button.setWarning();
+				button.setButtonText('Reset sync journal');
+				button.onClick(async () => {
+					try {
+						await this.plugin.resetSyncJournal();
+						new Notice('Sync journal reset for the current destination.');
+					} catch (error) {
+						new Notice(error instanceof Error ? error.message : 'Failed to reset sync journal');
+					}
+				});
+			});
 	}
 }

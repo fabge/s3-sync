@@ -103,28 +103,4 @@ export class SyncPathCodec {
 		return this.normalizedPrefix ? `${this.normalizedPrefix}/` : '';
 	}
 
-	/**
-	 * Returns the full S3 key for the metadata directory itself.
-	 *
-	 * Used when the engine needs to check whether the metadata directory
-	 * exists or when constructing keys for objects within it.
-	 *
-	 * @returns The prefixed metadata directory key, e.g. `"vault/.obsidian-s3-sync"`.
-	 */
-	getMetadataDir(): string {
-		return addPrefix(METADATA_DIR, this.normalizedPrefix);
-	}
-
-	/**
-	 * Returns the S3 key for the engine marker file.
-	 *
-	 * The marker file (`engine.json`) is written once during first-time setup
-	 * to record which sync engine version initialised the bucket namespace.
-	 * Its presence allows future versions to detect and handle legacy layouts.
-	 *
-	 * @returns The prefixed engine marker key, e.g. `"vault/.obsidian-s3-sync/engine.json"`.
-	 */
-	getEngineMarkerKey(): string {
-		return addPrefix(`${METADATA_DIR}/engine.json`, this.normalizedPrefix);
-	}
 }

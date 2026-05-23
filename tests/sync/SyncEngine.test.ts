@@ -49,7 +49,9 @@ interface MockExecutor {
 }
 
 interface MockJournal {
-	setMetadata: jest.Mock<Promise<void>, [string, number]>;
+	getMetadata: jest.Mock<Promise<string | number | boolean | undefined>, [string]>;
+	setMetadata: jest.Mock<Promise<void>, [string, string | number | boolean]>;
+	resetForDestination: jest.Mock<Promise<void>, [string]>;
 }
 
 interface MockChangeTracker {
@@ -135,8 +137,19 @@ function createSyncResult(overrides: Partial<SyncResult> = {}): SyncResult {
 function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineContext {
 	const app = new App();
 	const s3Provider: MockS3Provider = { kind: 's3-provider' };
+	const settings = createSettings(overrides);
 	const journal: MockJournal = {
+		getMetadata: jest.fn(async (key: string) => {
+			if (key === 'destinationFingerprint') {
+				return JSON.stringify({ bucket: settings.bucket, region: settings.region });
+			}
+			if (key === 'lastSuccessfulSyncAt') {
+				return 111;
+			}
+			return undefined;
+		}),
 		setMetadata: jest.fn().mockResolvedValue(undefined),
+		resetForDestination: jest.fn().mockResolvedValue(undefined),
 	};
 	const pathCodec: MockPathCodec = {
 		kind: 'path-codec',
@@ -154,7 +167,6 @@ function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineCon
 	const executor: MockExecutor = {
 		execute: jest.fn().mockResolvedValue(createSyncResult()),
 	};
-	const settings = createSettings(overrides);
 
 	mockedSyncPlanner.mockImplementation(() => planner as unknown as SyncPlanner);
 	mockedSyncExecutor.mockImplementation(() => executor as unknown as SyncExecutor);
@@ -313,6 +325,30 @@ describe('SyncEngine', () => {
 	 * persistence and conversion of unexpected top-level failures into SyncResult values.
 	 */
 	describe('result handling', () => {
+		it('records a destination fingerprint when none is stored yet', async () => {
+			const context = createEngineContext();
+			context.journal.getMetadata.mockImplementation(async (key: string) => {
+				if (key === 'destinationFingerprint') {
+					return undefined;
+				}
+				if (key === 'lastSuccessfulSyncAt') {
+					return 111;
+				}
+				return undefined;
+			});
+			const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(12_345);
+
+			await context.engine.sync();
+
+			expect(context.journal.setMetadata).toHaveBeenNthCalledWith(
+				1,
+				'destinationFingerprint',
+				JSON.stringify({ bucket: context.settings.bucket, region: context.settings.region }),
+			);
+			expect(context.journal.setMetadata).toHaveBeenNthCalledWith(2, 'lastSuccessfulSyncAt', 12_345);
+			nowSpy.mockRestore();
+		});
+
 		it('persists lastSuccessfulSyncAt metadata after a successful sync', async () => {
 			const context = createEngineContext();
 			const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(12_345);
@@ -321,6 +357,73 @@ describe('SyncEngine', () => {
 
 			expect(context.journal.setMetadata).toHaveBeenCalledWith('lastSuccessfulSyncAt', 12_345);
 			nowSpy.mockRestore();
+		});
+
+		it('blocks sync when the destination fingerprint differs from the stored value', async () => {
+			const context = createEngineContext();
+			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+			context.journal.getMetadata.mockImplementation(async (key: string) => {
+				if (key === 'destinationFingerprint') {
+					return JSON.stringify({ bucket: 'other-bucket', region: context.settings.region });
+				}
+				if (key === 'lastSuccessfulSyncAt') {
+					return 111;
+				}
+				return undefined;
+			});
+
+			const result = await context.engine.sync();
+
+			expect(result.success).toBe(false);
+			expect(result.errors[0]?.recoverable).toBe(false);
+			expect(result.errors[0]?.message).toContain('Reset sync journal');
+			expect(context.planner.buildPlan).not.toHaveBeenCalled();
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			expect(consoleErrorSpy).toHaveBeenCalled();
+			consoleErrorSpy.mockRestore();
+		});
+
+		it('blocks sync when settings change during planning', async () => {
+			const context = createEngineContext();
+			const planDeferred = createDeferred<SyncPlanItem[]>();
+			context.planner.buildPlan.mockReturnValueOnce(planDeferred.promise);
+			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			const syncPromise = context.engine.sync();
+			context.engine.updateSettings(createSettings({ bucket: 'changed-bucket' }));
+			planDeferred.resolve([]);
+
+			const result = await syncPromise;
+
+			expect(result.success).toBe(false);
+			expect(result.errors[0]?.message).toContain('destination changed during sync');
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			consoleErrorSpy.mockRestore();
+		});
+
+		it('blocks delete-local plans when there is no prior successful sync', async () => {
+			const context = createEngineContext();
+			context.planner.buildPlan.mockResolvedValueOnce([
+				createPlanItem('notes/one.md', 'delete-local'),
+			]);
+			context.journal.getMetadata.mockImplementation(async (key: string) => {
+				if (key === 'destinationFingerprint') {
+					return JSON.stringify({ bucket: context.settings.bucket, region: context.settings.region });
+				}
+				if (key === 'lastSuccessfulSyncAt') {
+					return undefined;
+				}
+				return undefined;
+			});
+			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			const result = await context.engine.sync();
+
+			expect(result.success).toBe(false);
+			expect(result.errors[0]?.action).toBe('delete-local');
+			expect(result.errors[0]?.message).toContain('destructive plan blocked');
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			consoleErrorSpy.mockRestore();
 		});
 
 		it('does not persist lastSuccessfulSyncAt when the executor returns a failed result', async () => {
@@ -411,6 +514,21 @@ describe('SyncEngine', () => {
 				context.changeTracker,
 				'device-123',
 			);
+		});
+
+		describe('journal reset', () => {
+			it('resets the journal for the current destination fingerprint', async () => {
+				const context = createEngineContext({
+					bucket: 'vault-b',
+					region: 'us-west-2',
+				});
+
+				await context.engine.resetJournalForCurrentDestination();
+
+				expect(context.journal.resetForDestination).toHaveBeenCalledWith(
+					JSON.stringify({ bucket: 'vault-b', region: 'us-west-2' }),
+				);
+			});
 		});
 	});
 });

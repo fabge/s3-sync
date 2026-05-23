@@ -14,6 +14,7 @@ global.TextDecoder = TextDecoder as typeof global.TextDecoder;
 Object.defineProperty(global, 'crypto', {
     value: {
         getRandomValues: (arr: Uint8Array) => crypto.randomFillSync(arr),
+        randomUUID: () => crypto.randomUUID(),
         subtle: crypto.webcrypto.subtle,
     },
 });

@@ -2,8 +2,8 @@
  * Tracks local vault file events and maintains a set of "dirty" paths
  * that have changed since the last sync.
  *
- * In the v2 architecture the ChangeTracker no longer writes to the journal
- * or hashes file content.  It simply records which paths were created,
+ * ChangeTracker does not write to the journal or hash file content. It
+ * simply records which paths were created,
  * modified, deleted, or renamed so the SyncPlanner can prioritise them
  * during the next sync cycle.
  *
