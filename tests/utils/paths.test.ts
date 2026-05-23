@@ -12,7 +12,6 @@ import {
     addPrefix,
     removePrefix,
     isPluginOwnPath,
-    isPluginReleaseAssetPath,
 } from '../../src/utils/paths';
 
 describe('Path Utils', () => {
@@ -222,21 +221,4 @@ describe('Path Utils', () => {
         });
     });
 
-    describe('isPluginReleaseAssetPath', () => {
-        it('should match the syncable plugin release files', () => {
-            expect(isPluginReleaseAssetPath('.obsidian/plugins/s3-sync/main.js', '.obsidian')).toBe(true);
-            expect(isPluginReleaseAssetPath('.obsidian/plugins/s3-sync/manifest.json', '.obsidian')).toBe(true);
-            expect(isPluginReleaseAssetPath('.obsidian/plugins/s3-sync/styles.css', '.obsidian')).toBe(true);
-        });
-
-        it('should not match local-only plugin files', () => {
-            expect(isPluginReleaseAssetPath('.obsidian/plugins/s3-sync/data.json', '.obsidian')).toBe(false);
-            expect(isPluginReleaseAssetPath('.obsidian/plugins/s3-sync/README.md', '.obsidian')).toBe(false);
-        });
-
-        it('should work with custom configDir and normalized slashes', () => {
-            expect(isPluginReleaseAssetPath('.config/plugins/s3-sync/main.js', '.config')).toBe(true);
-            expect(isPluginReleaseAssetPath('.obsidian\\plugins\\s3-sync\\styles.css', '.obsidian')).toBe(true);
-        });
-    });
 });

@@ -812,16 +812,6 @@ describe('SyncPlanner', () => {
 			expect(getPlannerPrivate(planner).shouldExclude('.trash/file.md')).toBe(true);
 		});
 
-		it('keeps this plugin release files in sync scope', () => {
-			expect(getPlannerPrivate(planner).shouldExclude('.obsidian/plugins/s3-sync/main.js')).toBe(false);
-			expect(getPlannerPrivate(planner).shouldExclude('.obsidian/plugins/s3-sync/manifest.json')).toBe(false);
-			expect(getPlannerPrivate(planner).shouldExclude('.obsidian/plugins/s3-sync/styles.css')).toBe(false);
-		});
-
-		it('still excludes this plugin local-only files', () => {
-			expect(getPlannerPrivate(planner).shouldExclude('.obsidian/plugins/s3-sync/data.json')).toBe(true);
-		});
-
 		it('does not exclude ordinary files', () => {
 			expect(getPlannerPrivate(planner).shouldExclude('notes/regular.md')).toBe(false);
 		});

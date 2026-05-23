@@ -152,4 +152,7 @@ npm install
 npm run lint
 npm run build
 npm test
+make install
 ```
+
+`make install` builds the plugin and copies `main.js`, `manifest.json`, and `styles.css` into `/Users/fabian/code/notes/.obsidian/plugins/s3-sync/`. Override the vault path with `make install VAULT=/path/to/vault`.

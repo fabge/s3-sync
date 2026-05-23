@@ -257,41 +257,20 @@ export function isConflictFile(path: string): boolean {
  */
 const PLUGIN_ID = 's3-sync';
 
-function getPluginDir(configDir: string): string {
-	return `${normalizePath(configDir)}/plugins/${PLUGIN_ID}/`;
-}
-
 /**
- * Check whether a vault-relative path falls inside this plugin's own directory.
+ * Check whether a vault-relative path falls inside this plugin's own settings directory.
+ *
+ * This is a hardcoded, non-overridable exclusion to prevent the plugin from syncing
+ * its own `data.json` (which contains AWS credentials) or any other plugin
+ * artefact (`main.js`, `manifest.json`, `styles.css`) to S3.
  *
  * @param path      - The vault-relative file path to test.
  * @param configDir - The vault config directory name (from `app.vault.configDir`,
  *                    typically `".obsidian"`).
- * @returns `true` if the path is inside this plugin's folder.
+ * @returns `true` if the path is inside the plugin's settings folder.
  */
 export function isPluginOwnPath(path: string, configDir: string): boolean {
 	const normalized = normalizePath(path);
-	const pluginDir = getPluginDir(configDir);
+	const pluginDir = `${normalizePath(configDir)}/plugins/${PLUGIN_ID}/`;
 	return normalized.startsWith(pluginDir) || normalized === pluginDir.slice(0, -1);
-}
-
-/**
- * Check whether a path is one of this plugin's syncable release assets.
- *
- * Only the plugin's shipped runtime files are eligible for sync:
- * `main.js`, `manifest.json`, and `styles.css`. Sensitive or local-only files such as
- * `data.json` remain excluded.
- *
- * @param path      - The vault-relative file path to test.
- * @param configDir - The vault config directory name (from `app.vault.configDir`,
- *                    typically `".obsidian"`).
- * @returns `true` if the path is a syncable release asset for this plugin.
- */
-export function isPluginReleaseAssetPath(path: string, configDir: string): boolean {
-	const normalized = normalizePath(path);
-	const pluginDir = getPluginDir(configDir);
-
-	return normalized === `${pluginDir}main.js`
-		|| normalized === `${pluginDir}manifest.json`
-		|| normalized === `${pluginDir}styles.css`;
 }
