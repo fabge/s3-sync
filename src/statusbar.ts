@@ -40,7 +40,7 @@ export class StatusBar {
 
 	init(): void {
 		this.statusBarEl = this.plugin.addStatusBarItem();
-		this.statusBarEl.addClass('s3-sync-status');
+		this.statusBarEl.addClasses(['s3-sync-status', 'mod-clickable']);
 		this.statusBarEl.empty();
 		this.segmentEl = this.createSegment();
 		this.update();
@@ -60,13 +60,12 @@ export class StatusBar {
 	}
 
 	private createSegment(): HTMLElement {
-		const segment = this.statusBarEl!.createDiv({
-			cls: 's3-sync-segment s3-sync-sync',
-		});
+		const segment = this.statusBarEl!.createSpan();
 		segment.tabIndex = 0;
+		segment.setAttr('role', 'button');
 
-		this.iconEl = segment.createSpan({ cls: 's3-sync-icon' });
-		this.textEl = segment.createSpan({ cls: 's3-sync-text' });
+		this.iconEl = segment.createSpan();
+		this.textEl = segment.createSpan();
 
 		segment.addEventListener('click', () => {
 			this.actionHandler?.();
@@ -91,12 +90,14 @@ export class StatusBar {
 	}
 
 	private renderSync(): void {
-		if (!this.segmentEl || !this.iconEl || !this.textEl) {
+		const statusBarEl = this.statusBarEl;
+		if (!statusBarEl || !this.segmentEl || !this.iconEl || !this.textEl) {
 			return;
 		}
 
 		const spec = SYNC_STATUS_SPEC[this.syncState.status];
-		this.segmentEl.className = `s3-sync-segment s3-sync-sync is-${this.syncState.status}`;
+		statusBarEl.className =
+			`status-bar-item plugin-s3-sync mod-clickable s3-sync-status is-${this.syncState.status}`;
 		this.renderIcon(this.iconEl, spec);
 
 		const suffix =
@@ -105,7 +106,7 @@ export class StatusBar {
 				: this.syncState.lastSyncTime
 					? ` ${formatRelativeTime(this.syncState.lastSyncTime)}`
 					: '';
-		this.textEl.setText(`${spec.label}${suffix}`);
+		this.textEl.setText(` ${spec.label}${suffix}`);
 	}
 
 	private renderIcon(target: HTMLElement, spec: StatusIndicatorSpec): void {

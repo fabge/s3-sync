@@ -19,7 +19,13 @@ import {
 	SyncStateRecord,
 } from '../types';
 import { normalizeEntityTag } from '../utils/etags';
-import { isConflictFile, matchesAnyGlob, getFilename, isPluginOwnPath } from '../utils/paths';
+import {
+	getFilename,
+	isConflictFile,
+	isPluginOwnPath,
+	isPluginReleaseAssetPath,
+	matchesAnyGlob,
+} from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 import { SyncJournal } from './SyncJournal';
 import { SyncPathCodec } from './SyncPathCodec';
@@ -474,6 +480,8 @@ export class SyncPlanner {
 	 * A path is excluded when any of the following is true:
 	 * - It is a conflict artifact (`LOCAL_` or `REMOTE_` prefixed filename) — already handled
 	 *   separately in {@link discoverState} and must not appear as a sync target.
+	 * - It is a local-only file in this plugin's own folder. Only the shipped release files
+	 *   (`main.js`, `manifest.json`, `styles.css`) remain in scope so plugin updates can sync.
 	 * - Its filename starts with `.obsidian-s3-sync` — internal plugin metadata files that
 	 *   must never be synced as ordinary vault content (e.g. the `.vault.enc` marker).
 	 * - It matches any pattern in `settings.excludePatterns` — user-configured glob exclusions.
@@ -484,8 +492,13 @@ export class SyncPlanner {
 	private shouldExclude(path: string): boolean {
 		if (isConflictFile(path)) return true;
 
-		// Hardcoded: never sync the plugin's own settings directory
-		if (isPluginOwnPath(path, this.app.vault.configDir)) return true;
+		// Hardcoded: only sync this plugin's shipped release files, never local-only files.
+		if (
+			isPluginOwnPath(path, this.app.vault.configDir)
+			&& !isPluginReleaseAssetPath(path, this.app.vault.configDir)
+		) {
+			return true;
+		}
 
 		const filename = getFilename(path);
 		if (filename.startsWith('.obsidian-s3-sync')) return true;

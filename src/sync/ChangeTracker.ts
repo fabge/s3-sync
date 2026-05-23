@@ -29,7 +29,12 @@
  */
 
 import { App, TFile, TAbstractFile } from 'obsidian';
-import { isConflictFile, matchesAnyGlob, isPluginOwnPath } from '../utils/paths';
+import {
+	isConflictFile,
+	isPluginOwnPath,
+	isPluginReleaseAssetPath,
+	matchesAnyGlob,
+} from '../utils/paths';
 
 /**
  * Listens to Obsidian vault events and maintains a live set of file paths
@@ -267,15 +272,16 @@ export class ChangeTracker {
 	 * Returns `true` if `path` should be silently ignored by the tracker.
 	 *
 	 * A path is excluded when it is a conflict artefact (prefixed with
-	 * `LOCAL_` or `REMOTE_`) or when it matches one of the user-configured
-	 * glob exclude patterns.
+	 * `LOCAL_` or `REMOTE_`), when it is a local-only file inside this plugin's
+	 * own folder, or when it matches one of the user-configured glob exclude patterns.
 	 *
 	 * @param path - The vault-relative path to test.
 	 * @returns `true` if the path should be excluded from dirty tracking.
 	 */
 	private shouldExclude(path: string): boolean {
 		return isConflictFile(path)
-			|| isPluginOwnPath(path, this.app.vault.configDir)
+			|| (isPluginOwnPath(path, this.app.vault.configDir)
+				&& !isPluginReleaseAssetPath(path, this.app.vault.configDir))
 			|| matchesAnyGlob(path, this.excludePatterns);
 	}
 }

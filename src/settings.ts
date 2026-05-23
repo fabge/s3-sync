@@ -19,7 +19,6 @@ export class S3SyncSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.addClass('s3-sync-settings');
 
 		this.renderConnectionSection(containerEl);
 		this.renderSyncSection(containerEl);

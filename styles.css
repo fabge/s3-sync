@@ -1,117 +1,14 @@
-.s3-sync-status {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.4rem;
-}
-
-.s3-sync-segment {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.25rem;
-	padding: 0.1rem 0.45rem;
-	border-radius: 999px;
-	cursor: pointer;
-	transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
-}
-
-.s3-sync-segment:hover,
-.s3-sync-segment:focus-visible {
-	background-color: var(--background-modifier-hover);
-	outline: none;
-}
-
-.s3-sync-icon {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 1rem;
-	height: 1rem;
-}
-
-.s3-sync-text {
-	font-size: var(--font-ui-small);
-	white-space: nowrap;
-}
-
-.s3-sync-segment.is-syncing,
-.s3-sync-segment.is-running {
+.s3-sync-status.is-syncing,
+.s3-sync-status.is-running {
 	color: var(--text-accent);
 }
 
-.s3-sync-segment.is-synced,
-.s3-sync-segment.is-completed,
-.s3-sync-segment.is-idle {
-	color: var(--text-normal);
-}
-
-.s3-sync-segment.is-conflicts,
-.s3-sync-segment.is-error {
+.s3-sync-status.is-conflicts,
+.s3-sync-status.is-error {
 	color: var(--text-error);
 }
 
-.s3-sync-segment.is-disabled,
-.s3-sync-segment.is-paused {
+.s3-sync-status.is-disabled,
+.s3-sync-status.is-paused {
 	color: var(--text-muted);
-	opacity: 0.85;
-}
-
-/* Backup List Modal */
-
-.s3-backup-list-modal {
-	max-width: 500px;
-}
-
-.s3-backup-list-container {
-	margin-top: 0.5rem;
-}
-
-.s3-backup-list-loading,
-.s3-backup-list-empty,
-.s3-backup-list-error {
-	color: var(--text-muted);
-	font-style: italic;
-}
-
-.s3-backup-list-error {
-	color: var(--text-error);
-}
-
-.s3-backup-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 0.5rem 0;
-	border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.s3-backup-row:last-of-type {
-	border-bottom: none;
-}
-
-.s3-backup-row-info {
-	flex: 1;
-	min-width: 0;
-}
-
-.s3-backup-row-date {
-	font-weight: var(--font-semibold);
-	font-size: var(--font-ui-small);
-}
-
-.s3-backup-row-meta {
-	font-size: var(--font-ui-smaller);
-	color: var(--text-muted);
-	margin-top: 2px;
-}
-
-.s3-backup-row-actions {
-	flex-shrink: 0;
-	margin-left: 0.75rem;
-}
-
-.s3-backup-list-footer {
-	font-size: var(--font-ui-smaller);
-	color: var(--text-muted);
-	text-align: center;
-	margin-top: 0.5rem;
 }
