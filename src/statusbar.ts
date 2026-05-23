@@ -60,12 +60,12 @@ export class StatusBar {
 	}
 
 	private createSegment(): HTMLElement {
-		const segment = this.statusBarEl!.createSpan();
+		const segment = this.statusBarEl!.createSpan({ cls: 's3-sync-segment' });
 		segment.tabIndex = 0;
 		segment.setAttr('role', 'button');
 
-		this.iconEl = segment.createSpan();
-		this.textEl = segment.createSpan();
+		this.iconEl = segment.createSpan({ cls: 's3-sync-icon' });
+		this.textEl = segment.createSpan({ cls: 's3-sync-text' });
 
 		segment.addEventListener('click', () => {
 			this.actionHandler?.();

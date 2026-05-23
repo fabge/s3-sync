@@ -38,9 +38,9 @@ describe('S3Config', () => {
 		expect(config.forcePathStyle).toBeUndefined();
 	});
 
-	it('defaults the region to us-east-1 when empty', () => {
+	it('defaults the region to eu-central-1 when empty', () => {
 		const config = buildS3ClientConfig(createTestSettings({ region: '' }));
-		expect(config.region).toBe('us-east-1');
+		expect(config.region).toBe('eu-central-1');
 	});
 
 	it('returns no validation errors for complete AWS settings', () => {

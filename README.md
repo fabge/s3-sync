@@ -36,7 +36,7 @@ The settings surface is intentionally small:
 
 | Setting | Description |
 | :--- | :--- |
-| **Region** | AWS region for the bucket, for example `us-east-1`. |
+| **Region** | AWS region for the bucket, for example `eu-central-1`. |
 | **Bucket** | Name of the S3 bucket that stores the synced vault. |
 | **Access key ID** | AWS access key used for S3 requests. |
 | **Secret access key** | AWS secret access key used for S3 requests. |
@@ -152,7 +152,20 @@ npm install
 npm run lint
 npm run build
 npm test
-make install
 ```
 
-`make install` builds the plugin and copies `main.js`, `manifest.json`, and `styles.css` into `/Users/fabian/code/notes/.obsidian/plugins/s3-sync/`. Override the vault path with `make install VAULT=/path/to/vault`.
+## BRAT releases
+
+This repo is laid out in a BRAT-friendly way: the release assets BRAT needs are the root-level `manifest.json`, `main.js`, and `styles.css`.
+
+A GitHub Actions workflow at `.github/workflows/release.yml` automates that release flow:
+
+1. bump `manifest.json` to the version you want to ship
+2. create and push a matching tag, for example `0.1.1` or `v0.1.1`
+3. the workflow will lint, test, build, create a GitHub release, and attach:
+   - `manifest.json`
+   - `main.js`
+   - `styles.css`
+
+The workflow fails if the release tag version does not match `manifest.json`.
+

@@ -1,5 +1,5 @@
 import { Notice, Plugin } from 'obsidian';
-import { S3SyncSettings, DEFAULT_SETTINGS } from './types';
+import { DEFAULT_SETTINGS, S3SyncSettings, SyncResult } from './types';
 import { S3SyncSettingTab } from './settings';
 import { StatusBar } from './statusbar';
 import { S3Provider } from './storage/S3Provider';
@@ -103,7 +103,7 @@ export default class S3SyncPlugin extends Plugin {
 
 		this.app.workspace.onLayoutReady(() => {
 			if (this.settings.syncEnabled && this.settings.syncOnStartup) {
-				void this.syncScheduler?.triggerSync();
+				void this.triggerStartupSync();
 			}
 		});
 	}
@@ -185,6 +185,43 @@ export default class S3SyncPlugin extends Plugin {
 		this.startSyncServices();
 	}
 
+	private async triggerStartupSync(): Promise<void> {
+		await this.triggerSyncWithNotices();
+	}
+
+	private async triggerSyncWithNotices(): Promise<void> {
+		new Notice('Starting sync...');
+		const result = await this.syncScheduler?.triggerSync();
+		if (!result) {
+			return;
+		}
+
+		this.showSyncResultNotice(result);
+	}
+
+	private showSyncResultNotice(result: SyncResult): void {
+		if (result.errors[0]) {
+			new Notice(`Sync completed with errors: ${result.errors[0].message}`);
+			return;
+		}
+
+		if (result.conflicts.length > 0) {
+			new Notice(`Sync completed with ${result.conflicts.length} conflict(s)`);
+			return;
+		}
+
+		const filesSynced =
+			result.filesUploaded
+			+ result.filesDownloaded
+			+ result.filesDeleted
+			+ result.filesAdopted
+			+ result.filesForgotten;
+
+		new Notice(
+			`Sync completed: ${filesSynced} file(s) changed — ${result.filesUploaded} uploaded, ${result.filesDownloaded} downloaded, ${result.filesDeleted} deleted`,
+		);
+	}
+
 	async resetSyncJournal(): Promise<void> {
 		if (!this.syncEngine || !this.changeTracker) {
 			throw new Error('Sync engine is not initialized yet.');
@@ -210,25 +247,7 @@ export default class S3SyncPlugin extends Plugin {
 			return;
 		}
 
-		new Notice('Starting sync...');
-		const result = await this.syncScheduler?.triggerSync();
-		if (!result) {
-			return;
-		}
-
-		if (result.errors[0]) {
-			new Notice(`Sync completed with errors: ${result.errors[0].message}`);
-			return;
-		}
-
-		if (result.conflicts.length > 0) {
-			new Notice(`Sync completed with ${result.conflicts.length} conflict(s)`);
-			return;
-		}
-
-		new Notice(
-			`Sync completed: ${result.filesUploaded} uploaded, ${result.filesDownloaded} downloaded, ${result.filesDeleted} deleted`,
-		);
+		await this.triggerSyncWithNotices();
 	}
 
 	getS3Provider(): S3Provider | null {

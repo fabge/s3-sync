@@ -20,7 +20,7 @@ export interface S3SyncSettings {
 
 export const DEFAULT_SETTINGS: S3SyncSettings = {
 	provider: 'aws',
-	region: 'us-east-1',
+	region: 'eu-central-1',
 	bucket: '',
 	accessKeyId: '',
 	secretAccessKey: '',

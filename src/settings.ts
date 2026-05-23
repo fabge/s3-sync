@@ -30,10 +30,10 @@ export class S3SyncSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Region')
-			.setDesc('Region of the bucket, for example us-east-1')
+			.setDesc('Region of the bucket, for example eu-central-1')
 			.addText((text) => {
 				// eslint-disable-next-line obsidianmd/ui/sentence-case -- literal example value
-				text.setPlaceholder('us-east-1');
+				text.setPlaceholder('eu-central-1');
 				text.setValue(this.plugin.settings.region);
 				text.onChange(async (value) => {
 					this.plugin.settings.region = value.trim();

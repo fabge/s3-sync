@@ -12,7 +12,7 @@ import { ObsidianHttpHandler } from './ObsidianHttpHandler';
 
 export function buildS3ClientConfig(settings: S3SyncSettings): S3ClientConfig {
     return {
-        region: settings.region || 'us-east-1',
+        region: settings.region || 'eu-central-1',
         credentials: {
             accessKeyId: settings.accessKeyId,
             secretAccessKey: settings.secretAccessKey,

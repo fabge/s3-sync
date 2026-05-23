@@ -1,3 +1,19 @@
+.s3-sync-segment {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+}
+
+.s3-sync-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.s3-sync-text {
+	line-height: 1;
+}
+
 .s3-sync-status.is-syncing,
 .s3-sync-status.is-running {
 	color: var(--text-accent);
