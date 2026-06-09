@@ -42,10 +42,11 @@ When borrowing ideas from the reference repo:
 
 ## Upstream release review
 
-- Reference repo: `ceilaolabs/obsidian-s3-sync-and-backup`
+- Reference repo: `ceilaolabs/obsidian-s3-sync-and-backup` — the original ("OG") project this one is a stripped-down reinterpretation of.
 - Future contributors should check that repo's latest GitHub releases and release notes before larger changes.
 - Evaluate whether any newer upstream safety or correctness fixes should be adopted here.
 - Also evaluate older upstream release-note items that were not implemented yet, but only if they still fit this repo's stripped-down scope.
+- Last reviewed: upstream **4.1.2** (2026-06-09). All in-scope safety/correctness fixes through 4.1.x were already adopted here (weak-ETag handling, journal reset, destructive-deletion safeguard, stale-journal clearing; our `deviceId` already uses `crypto.randomUUID`). Newer upstream items are out of scope (RustFS provider, encryption, backups, store-compliance renames, their dependency bumps). Nothing to adopt.
 
 ### Upstream-derived changes already adopted here
 
