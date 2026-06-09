@@ -21,8 +21,8 @@ describe('vaultFiles', () => {
             expect(getVaultFileKind(path)).toBe('binary');
         });
 
-        it('returns text when there is no extension', () => {
-            expect(getVaultFileKind('README')).toBe('text');
+        it('returns binary when there is no extension', () => {
+            expect(getVaultFileKind('README')).toBe('binary');
         });
     });
 

@@ -4,14 +4,6 @@ function normalizePath(path: string): string {
     return path.replace(/\\/g, '/');
 }
 
-export function normalizePrefix(prefix: string): string {
-    return normalizePath(prefix)
-        .trim()
-        .replace(/^\/+/, '')
-        .replace(/\/+$/, '')
-        .replace(/\/+/g, '/');
-}
-
 export function getFilename(path: string): string {
     const normalized = normalizePath(path);
     const lastSlash = normalized.lastIndexOf('/');
@@ -42,29 +34,6 @@ function matchGlob(path: string, pattern: string): boolean {
 
 export function matchesAnyGlob(path: string, patterns: string[]): boolean {
     return patterns.some((pattern) => matchGlob(path, pattern));
-}
-
-export function addPrefix(path: string, prefix: string): string {
-    const normalizedPrefix = normalizePrefix(prefix);
-    const normalizedPath = normalizePath(path).replace(/^\/+/, '');
-
-    if (!normalizedPrefix) return normalizedPath;
-    if (!normalizedPath) return normalizedPrefix;
-    return `${normalizedPrefix}/${normalizedPath}`;
-}
-
-export function removePrefix(path: string, prefix: string): string | null {
-    const normalizedPath = normalizePath(path);
-    const normalizedPrefix = normalizePrefix(prefix);
-
-    if (!normalizedPrefix) return normalizedPath;
-
-    const prefixWithSlash = `${normalizedPrefix}/`;
-    if (normalizedPath === normalizedPrefix) return '';
-    if (normalizedPath.startsWith(prefixWithSlash)) {
-        return normalizedPath.substring(prefixWithSlash.length);
-    }
-    return null;
 }
 
 export function isConflictFile(path: string): boolean {

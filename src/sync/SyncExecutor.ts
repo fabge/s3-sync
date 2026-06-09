@@ -1,6 +1,6 @@
 /** Executes sync plans and writes journal state only after S3/vault operations succeed. */
 
-import { App, TFile } from 'obsidian';
+import { App, TFile, TFolder } from 'obsidian';
 import {
 	ConflictMode,
 	SyncAction,
@@ -331,8 +331,21 @@ export class SyncExecutor {
 		let currentPath = '';
 		for (const part of parts) {
 			currentPath = currentPath ? `${currentPath}/${part}` : part;
-			if (!this.app.vault.getAbstractFileByPath(currentPath)) {
+			const existing = this.app.vault.getAbstractFileByPath(currentPath);
+			if (existing) {
+				if (!(existing instanceof TFolder)) {
+					throw new Error(`Parent path is not a folder: ${currentPath}`);
+				}
+				continue;
+			}
+
+			try {
 				await this.app.vault.createFolder(currentPath);
+			} catch (error) {
+				if (this.app.vault.getAbstractFileByPath(currentPath) instanceof TFolder) {
+					continue;
+				}
+				throw error;
 			}
 		}
 	}

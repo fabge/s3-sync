@@ -929,6 +929,20 @@ describe('SyncExecutor', () => {
 			expect(app.vault.createFolder).toHaveBeenCalledWith('a/b');
 		});
 
+		it('continues when another write creates the folder first', async () => {
+			const { internals, app, vaultEntries } = createExecutorContext();
+			app.vault.getAbstractFileByPath.mockImplementation((path: string) => vaultEntries.get(path) ?? null);
+			app.vault.createFolder.mockImplementationOnce(async (path: string) => {
+				const folder = new TestTFolder(path);
+				vaultEntries.set(path, folder);
+				throw new Error('Folder already exists');
+			});
+
+			await internals.ensureParentFolders('a/b.md');
+
+			expect(app.vault.createFolder).toHaveBeenCalledWith('a');
+		});
+
 		it('does nothing for root-level files', async () => {
 			const { internals, app } = createExecutorContext();
 

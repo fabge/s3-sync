@@ -67,10 +67,18 @@ export class SyncPlanner {
 		const plan: SyncPlanItem[] = [];
 
 		for (const ctx of contexts.values()) {
+			const local = await this.classifyLocal(ctx);
+			const remote = await this.classifyRemote(ctx);
+
+			if (!ctx.baseline && local === 'L+' && remote === 'R+') {
+				await this.computeLocalFingerprint(ctx);
+				await this.ensureRemoteFingerprint(ctx);
+			}
+
 			const input: DecisionInput = {
 				path: ctx.path,
-				local: await this.classifyLocal(ctx),
-				remote: await this.classifyRemote(ctx),
+				local,
+				remote,
 				hasUnresolvedConflict: ctx.conflict !== undefined,
 				hasConflictArtifacts: ctx.hasConflictArtifacts,
 				localExists: ctx.local !== undefined,

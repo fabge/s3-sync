@@ -34,7 +34,7 @@ export function getVaultFileKind(path: string): VaultFileKind {
     const extension = getExtension(path).toLowerCase();
 
     if (!extension) {
-        return 'text';
+        return 'binary';
     }
 
     return TEXT_FILE_EXTENSIONS.has(extension) ? 'text' : 'binary';

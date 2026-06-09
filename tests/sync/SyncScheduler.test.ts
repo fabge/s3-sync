@@ -30,6 +30,8 @@ interface SchedulerContext {
 function createSettings(overrides: Partial<S3SyncSettings> = {}): S3SyncSettings {
 	return {
 		...DEFAULT_SETTINGS,
+		syncEnabled: true,
+		autoSyncEnabled: true,
 		...overrides,
 	};
 }

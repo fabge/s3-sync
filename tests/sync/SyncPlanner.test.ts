@@ -303,6 +303,37 @@ describe('SyncPlanner', () => {
 			]);
 		});
 
+		it('passes fingerprints into first-sync decisions when both sides exist', async () => {
+			addVaultFile('same.md', 'same content');
+			s3Provider.listObjects.mockResolvedValue([
+				createRemoteObject({ key: 'vault/same.md' }),
+			]);
+			s3Provider.headObject.mockResolvedValue({
+				etag: 'remote-etag',
+				size: 12,
+				lastModified: 10,
+				fingerprint: 'sha256:same',
+			});
+			mockedReadVaultFile.mockResolvedValue('same content');
+			mockedFingerprint.mockResolvedValue('sha256:same');
+			mockedDecide.mockImplementation((input) => {
+				expect(input.local).toBe('L+');
+				expect(input.remote).toBe('R+');
+				expect(input.localFingerprint).toBe('sha256:same');
+				expect(input.remoteFingerprint).toBe('sha256:same');
+				return createPlanItem(input.path, 'adopt');
+			});
+
+			const plan = await planner.buildPlan();
+
+			expect(plan).toEqual([
+				expect.objectContaining({
+					path: 'same.md',
+					action: 'adopt',
+				}),
+			]);
+		});
+
 		it('filters skip items when local and remote both match the baseline', async () => {
 			addVaultFile('stable.md', '1234567890', 500, 10);
 			s3Provider.listObjects.mockResolvedValue([

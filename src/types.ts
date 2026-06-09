@@ -20,10 +20,10 @@ export const DEFAULT_SETTINGS: S3SyncSettings = {
 	bucket: '',
 	accessKeyId: '',
 	secretAccessKey: '',
-	syncEnabled: true,
-	autoSyncEnabled: true,
+	syncEnabled: false,
+	autoSyncEnabled: false,
 	syncIntervalMinutes: 5,
-	syncOnStartup: true,
+	syncOnStartup: false,
 	excludePatterns: ['**/workspace*', '.trash/**'],
 	protectModifyPercentage: 50,
 };
