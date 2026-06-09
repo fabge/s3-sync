@@ -169,3 +169,15 @@ A GitHub Actions workflow at `.github/workflows/release.yml` automates that rele
 
 The workflow fails if the release tag version does not match `manifest.json`.
 
+## Credits
+
+This plugin is a stripped-down reinterpretation of
+[`ceilaolabs/obsidian-s3-sync-and-backup`](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup) —
+the original ("OG") project that inspired it. That repo is the full-featured
+take (multiple storage providers, encryption, scheduled backups). This one
+deliberately keeps a much smaller surface: AWS S3 only, sync only, no
+encryption. Several safety and correctness ideas here (vault-local device ID,
+weak-ETag normalization, destination-fingerprint / stale-journal protection,
+the destructive-plan block, and the **Reset sync journal** action) are borrowed
+from it. Credit for the original concept goes to its authors.
+

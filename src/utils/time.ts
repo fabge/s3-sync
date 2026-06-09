@@ -1,12 +1,3 @@
-/**
- * Time formatting utility for status bar display.
- */
-
-/**
- * Format timestamp as relative time string (e.g. "2m ago", "3h ago").
- *
- * @param timestamp - Epoch timestamp in milliseconds, or `null` for "".
- */
 export function formatRelativeTime(timestamp: number | null): string {
     if (!timestamp) return '';
 

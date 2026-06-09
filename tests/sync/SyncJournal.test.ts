@@ -235,7 +235,6 @@ describe('SyncJournal', () => {
 			await expect(journal.getAllConflicts()).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.getMetadata('engineVersion')).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.setMetadata('engineVersion', 2)).rejects.toThrow(/SyncJournal not initialized/);
-			await expect(journal.clear()).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.resetForDestination('destination')).rejects.toThrow(/SyncJournal not initialized/);
 		});
 
@@ -321,29 +320,6 @@ describe('SyncJournal', () => {
 			expect(metadata.get('engineVersion')).toBe(2);
 			expect(metadata.get('syncEnabled')).toBe(true);
 			expect(metadata.get('deviceName')).toBe('Laptop');
-		});
-	});
-
-	describe('clear', () => {
-		it('clears all stores inside a single readwrite transaction', async () => {
-			const { journal, stateRecords, conflicts, metadata, db, tx, storeHandles } = await initializeJournal();
-			stateRecords.set('notes/example.md', createStateRecord());
-			conflicts.set('notes/conflict.md', createConflictRecord());
-			metadata.set('engineVersion', 2);
-
-			await journal.clear();
-
-			expect(db.transaction).toHaveBeenCalledTimes(1);
-			expect(db.transaction).toHaveBeenCalledWith(['stateRecords', 'conflicts', 'metadata'], 'readwrite');
-			expect(tx.objectStore).toHaveBeenNthCalledWith(1, 'stateRecords');
-			expect(tx.objectStore).toHaveBeenNthCalledWith(2, 'conflicts');
-			expect(tx.objectStore).toHaveBeenNthCalledWith(3, 'metadata');
-			expect(storeHandles.stateRecords.clear).toHaveBeenCalledTimes(1);
-			expect(storeHandles.conflicts.clear).toHaveBeenCalledTimes(1);
-			expect(storeHandles.metadata.clear).toHaveBeenCalledTimes(1);
-			expect(stateRecords.size).toBe(0);
-			expect(conflicts.size).toBe(0);
-			expect(metadata.size).toBe(0);
 		});
 	});
 

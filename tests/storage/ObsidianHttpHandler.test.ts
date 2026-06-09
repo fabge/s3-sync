@@ -1,10 +1,3 @@
-/**
- * Unit tests for ObsidianHttpHandler.
- *
- * Verifies URL construction, header filtering, body handling, error wrapping,
- * and response body format for AWS SDK stream deserialization.
- */
-
 import { requestUrl, type RequestUrlParam } from 'obsidian';
 import { HttpRequest } from '@smithy/protocol-http';
 import { ObsidianHttpHandler } from '../../src/storage/ObsidianHttpHandler';
@@ -34,7 +27,6 @@ describe('ObsidianHttpHandler', () => {
 		jest.clearAllMocks();
 	});
 
-	/** Verifies the core response body format contract with the AWS SDK. */
 	describe('response body format', () => {
 		it('returns ReadableStream bodies for successful responses when available', async () => {
 			const payload = new TextEncoder().encode('hello world');
@@ -85,7 +77,6 @@ describe('ObsidianHttpHandler', () => {
 		});
 	});
 
-	/** Verifies URL construction from decomposed HttpRequest fields. */
 	describe('URL building', () => {
 		it('assembles a full URL with query parameters', async () => {
 			mockSuccessResponse();
@@ -142,7 +133,6 @@ describe('ObsidianHttpHandler', () => {
 		});
 	});
 
-	/** Verifies that problematic headers are filtered before sending. */
 	describe('header filtering', () => {
 		it('filters out content-length and host headers', async () => {
 			mockSuccessResponse();
@@ -167,7 +157,6 @@ describe('ObsidianHttpHandler', () => {
 		});
 	});
 
-	/** Verifies request body handling for different HTTP methods and content types. */
 	describe('request body handling', () => {
 		it('skips body for GET requests even when body is present', async () => {
 			mockSuccessResponse();
@@ -224,7 +213,6 @@ describe('ObsidianHttpHandler', () => {
 		});
 	});
 
-	/** Verifies error wrapping for network-level failures. */
 	describe('error handling', () => {
 		it('wraps network errors with a descriptive message', async () => {
 			mockedRequestUrl.mockRejectedValue(new Error('net::ERR_CONNECTION_REFUSED'));
@@ -259,7 +247,6 @@ describe('ObsidianHttpHandler', () => {
 		});
 	});
 
-	/** Verifies the Smithy interface stubs behave correctly. */
 	describe('Smithy interface', () => {
 		it('returns requestTimeout in httpHandlerConfigs', () => {
 			const handler = new ObsidianHttpHandler({ requestTimeout: 5000 });

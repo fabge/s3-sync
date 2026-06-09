@@ -17,7 +17,7 @@ import { readVaultFile } from '../../src/utils/vaultFiles';
 import { S3Provider } from '../../src/storage/S3Provider';
 import { SyncJournal } from '../../src/sync/SyncJournal';
 import { SyncPathCodec } from '../../src/sync/SyncPathCodec';
-import { SyncPayloadCodec } from '../../src/sync/SyncPayloadCodec';
+import { fingerprint } from '../../src/utils/fingerprint';
 
 jest.mock('../../src/storage/S3Provider', () => ({
 	S3Provider: jest.fn().mockImplementation(() => ({
@@ -43,11 +43,8 @@ jest.mock('../../src/sync/SyncPathCodec', () => ({
 	})),
 }));
 
-jest.mock('../../src/sync/SyncPayloadCodec', () => ({
-	SyncPayloadCodec: jest.fn().mockImplementation(() => ({
-		fingerprint: jest.fn(),
-		decodeAfterDownload: jest.fn(),
-	})),
+jest.mock('../../src/utils/fingerprint', () => ({
+	fingerprint: jest.fn(),
 }));
 
 jest.mock('../../src/sync/SyncDecisionTable', () => ({
@@ -105,11 +102,6 @@ interface MockSyncPathCodec {
 	isMetadataKey: jest.Mock<boolean, [string]>;
 	remoteToLocal: jest.Mock<string | null, [string]>;
 	localToRemote: jest.Mock<string, [string]>;
-}
-
-interface MockSyncPayloadCodec {
-	fingerprint: jest.Mock<Promise<string>, [string | Uint8Array]>;
-	decodeAfterDownload: jest.Mock<Uint8Array, [Uint8Array, undefined?]>;
 }
 
 interface VaultWithAddFile extends Vault {
@@ -191,11 +183,11 @@ describe('SyncPlanner', () => {
 	let s3Provider: MockS3Provider;
 	let journal: MockSyncJournal;
 	let pathCodec: MockSyncPathCodec;
-	let payloadCodec: MockSyncPayloadCodec;
 	let planner: SyncPlanner;
 
 	const mockedDecide = jest.mocked(decide);
 	const mockedReadVaultFile = jest.mocked(readVaultFile);
+	const mockedFingerprint = jest.mocked(fingerprint);
 
 	function createPlanner(overrides: Partial<S3SyncSettings> = {}): SyncPlanner {
 		settings = createSettings(overrides);
@@ -204,7 +196,6 @@ describe('SyncPlanner', () => {
 			s3Provider as unknown as S3Provider,
 			journal as unknown as SyncJournal,
 			pathCodec as unknown as SyncPathCodec,
-			payloadCodec as unknown as SyncPayloadCodec,
 			settings,
 		);
 	}
@@ -242,11 +233,6 @@ describe('SyncPlanner', () => {
 			localToRemote: jest.fn(),
 		};
 
-		payloadCodec = {
-			fingerprint: jest.fn(),
-			decodeAfterDownload: jest.fn(),
-		};
-
 		s3Provider.listObjects.mockResolvedValue([]);
 		s3Provider.headObject.mockResolvedValue(null);
 		s3Provider.downloadFileWithMetadata.mockResolvedValue(null);
@@ -256,8 +242,7 @@ describe('SyncPlanner', () => {
 		pathCodec.isMetadataKey.mockReturnValue(false);
 		pathCodec.remoteToLocal.mockImplementation((key) => key.replace(/^vault\//u, ''));
 		pathCodec.localToRemote.mockImplementation((path) => `vault/${path}`);
-		payloadCodec.fingerprint.mockResolvedValue('sha256:fingerprint');
-		payloadCodec.decodeAfterDownload.mockImplementation((content) => content);
+		mockedFingerprint.mockResolvedValue('sha256:fingerprint');
 		mockedReadVaultFile.mockResolvedValue('local-content');
 		mockedDecide.mockImplementation((input) => ({
 			path: input.path,
@@ -543,13 +528,13 @@ describe('SyncPlanner', () => {
 
 			expect(result).toBe('L=');
 			expect(mockedReadVaultFile).not.toHaveBeenCalled();
-			expect(payloadCodec.fingerprint).not.toHaveBeenCalled();
+			expect(mockedFingerprint).not.toHaveBeenCalled();
 		});
 
 		it('returns L= when local metadata changed but the fingerprint matches the baseline', async () => {
 			const file = addVaultFile('same-content.md', 'hello world', 400, 11);
 			mockedReadVaultFile.mockResolvedValue('hello world');
-			payloadCodec.fingerprint.mockResolvedValue('sha256:same');
+			mockedFingerprint.mockResolvedValue('sha256:same');
 
 			const result = await getPlannerPrivate(planner).classifyLocal({
 				path: 'same-content.md',
@@ -565,13 +550,13 @@ describe('SyncPlanner', () => {
 
 			expect(result).toBe('L=');
 			expect(mockedReadVaultFile).toHaveBeenCalledWith(vault, file);
-			expect(payloadCodec.fingerprint).toHaveBeenCalledWith('hello world');
+			expect(mockedFingerprint).toHaveBeenCalledWith('hello world');
 		});
 
 		it('returns LΔ when local fingerprint differs from the baseline', async () => {
 			const file = addVaultFile('changed.md', 'new content', 200, 11);
 			mockedReadVaultFile.mockResolvedValue('new content');
-			payloadCodec.fingerprint.mockResolvedValue('sha256:new');
+			mockedFingerprint.mockResolvedValue('sha256:new');
 
 			const result = await getPlannerPrivate(planner).classifyLocal({
 				path: 'changed.md',
@@ -729,11 +714,9 @@ describe('SyncPlanner', () => {
 
 		it('falls back to download and hashing when headObject returns null', async () => {
 			const downloaded = createDownloadResult({ content: new Uint8Array([7, 8, 9]) });
-			const decoded = new Uint8Array([9, 8, 7]);
 			s3Provider.headObject.mockResolvedValue(null);
 			s3Provider.downloadFileWithMetadata.mockResolvedValue(downloaded);
-			payloadCodec.decodeAfterDownload.mockReturnValue(decoded);
-			payloadCodec.fingerprint.mockResolvedValue('sha256:match');
+			mockedFingerprint.mockResolvedValue('sha256:match');
 
 			const result = await getPlannerPrivate(planner).classifyRemote({
 				path: 'fallback.md',
@@ -752,8 +735,7 @@ describe('SyncPlanner', () => {
 			expect(result).toBe('R=');
 			expect(s3Provider.headObject).toHaveBeenCalledWith('vault/fallback.md');
 			expect(s3Provider.downloadFileWithMetadata).toHaveBeenCalledWith('vault/fallback.md');
-			expect(payloadCodec.decodeAfterDownload).toHaveBeenCalledWith(downloaded.content, undefined);
-			expect(payloadCodec.fingerprint).toHaveBeenCalledWith(decoded);
+			expect(mockedFingerprint).toHaveBeenCalledWith(downloaded.content);
 		});
 	});
 

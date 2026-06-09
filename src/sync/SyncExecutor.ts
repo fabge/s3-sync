@@ -1,10 +1,4 @@
-/**
- * Executes a list of {@link SyncPlanItem}s with bounded concurrency.
- *
- * Each successful action atomically updates the journal baseline.
- * Fail-fast: after {@link MAX_ERRORS} consecutive errors the executor
- * stops scheduling new work but lets in-flight actions finish.
- */
+/** Executes sync plans and writes journal state only after S3/vault operations succeed. */
 
 import { App, TFile } from 'obsidian';
 import {
@@ -14,103 +8,34 @@ import {
 	SyncPlanItem,
 	SyncResult,
 	SyncStateRecord,
-	SyncUploadMetadata,
 } from '../types';
 import { getVaultFileKind, readVaultFile, toArrayBuffer } from '../utils/vaultFiles';
+import { fingerprint } from '../utils/fingerprint';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
 import { SyncPathCodec } from './SyncPathCodec';
-import { SyncPayloadCodec } from './SyncPayloadCodec';
-import { ChangeTracker } from './ChangeTracker';
-import { encodeMetadata } from './SyncObjectMetadata';
 
-/**
- * Maximum number of plan items that may be executing concurrently.
- *
- * 4 is a pragmatic sweet spot: enough parallelism to hide S3 round-trip
- * latency for small files while staying well within typical browser
- * connection-pool limits (usually 6 per host) and avoiding memory spikes
- * from simultaneously buffering many large binary files.
- */
+// 4 hides S3 round-trip latency while staying within typical browser
+// connection-pool limits (~6/host) and avoiding large-binary memory spikes.
 const MAX_CONCURRENCY = 4;
 
-/**
- * Number of item-level errors that triggers fail-fast: the executor stops
- * dispatching new work once this threshold is reached.
- *
- * 3 allows transient failures (e.g. a single throttled S3 request) to be
- * tolerated without abandoning the entire plan, while still preventing a
- * cascade where every remaining item also fails (e.g. lost credentials).
- * In-flight items are always allowed to complete before the loop exits.
- */
+// Tolerate transient failures but stop a credential-loss cascade from
+// retrying every remaining item.
 const MAX_ERRORS = 3;
 
-/**
- * Executes a {@link SyncPlanItem} list produced by {@link SyncPlanner} with
- * bounded concurrency and fail-fast error handling.
- *
- * ### Concurrency model
- * The executor maintains an `inFlight` set of up to {@link MAX_CONCURRENCY}
- * concurrent promises.  An outer `while` loop drains the set via
- * `Promise.race`; an inner `while` loop greedily fills available slots.
- * This avoids Promise chains of unbounded depth and provides natural
- * backpressure.
- *
- * ### Journal semantics
- * Every action that mutates state (upload, download, delete, adopt) writes
- * a new {@link SyncStateRecord} to the journal **after** the S3 operation
- * succeeds.  This keeps the journal consistent with actual remote state:
- * a crash mid-action leaves a stale baseline rather than a phantom one,
- * which the planner will detect and re-sync on the next run.
- *
- * ### Fail-fast
- * After {@link MAX_ERRORS} item failures the inner fill loop stops accepting
- * new items.  Already-running items finish normally.  The final
- * {@link SyncResult} reports all errors; callers decide whether to retry.
- */
 export class SyncExecutor {
 	private deviceId: string;
 
-	/**
-	 * @param app           - The Obsidian App instance used for vault file I/O.
-	 * @param s3Provider    - S3 abstraction layer for remote object operations.
-	 * @param journal       - IndexedDB journal for per-file baseline persistence.
-	 * @param pathCodec     - Converts between vault-relative paths and S3 keys.
-	 * @param payloadCodec  - Encodes and decodes file content (currently plaintext passthrough).
-	 * @param changeTracker - Tracks which paths are currently syncing so the
-	 *   file-watcher can suppress spurious dirty-marks during writes.
-	 * @param deviceId      - Stable identifier written into S3 metadata as
-	 *   `obsidian-device-id` so other devices know who last wrote a file.
-	 */
 	constructor(
 		private app: App,
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
 		private pathCodec: SyncPathCodec,
-		private payloadCodec: SyncPayloadCodec,
-		private changeTracker: ChangeTracker,
 		deviceId: string,
 	) {
 		this.deviceId = deviceId;
 	}
 
-	/**
-	 * Execute all items in `plan` with bounded concurrency.
-	 *
-	 * The method uses a two-level loop:
-	 * - **Inner `while`** — fills the `inFlight` set up to {@link MAX_CONCURRENCY}
-	 *   slots, stopping early if the error threshold is reached.
-	 * - **Outer `while`** — waits for the fastest in-flight promise to settle
-	 *   (`Promise.race`), then re-enters the inner loop to top up free slots.
-	 *
-	 * This pattern is preferable to `Promise.all` because it starts new items
-	 * as soon as a slot opens rather than waiting for the entire batch.
-	 *
-	 * @param plan - Ordered list of sync actions to execute.  The order is
-	 *   preserved but items may complete out of order due to concurrency.
-	 * @returns A {@link SyncResult} aggregating counters, conflict paths, and
-	 *   any errors that occurred.  `success` is `true` only when `errors` is empty.
-	 */
 	async execute(plan: SyncPlanItem[]): Promise<SyncResult> {
 		const result: SyncResult = {
 			success: false,
@@ -129,11 +54,7 @@ export class SyncExecutor {
 		let planIndex = 0;
 		const inFlight = new Set<Promise<void>>();
 
-		// Outer loop: keep going while there are items yet to start OR items
-		// still running.  Exits only when both conditions are false.
 		while (planIndex < plan.length || inFlight.size > 0) {
-			// Inner loop: greedily fill available concurrency slots.
-			// Stops when: slots full | plan exhausted | error threshold reached.
 			while (
 				inFlight.size < MAX_CONCURRENCY &&
 				planIndex < plan.length &&
@@ -142,15 +63,12 @@ export class SyncExecutor {
 				const item = plan[planIndex]!;
 				planIndex++;
 
-				this.changeTracker.markPathSyncing(item.path);
 				const promise = this.executeItem(item, result)
 					.catch((error: unknown) => {
 						errorCount++;
 						result.errors.push(this.toSyncError(item.path, item.action, error));
 					})
 					.finally(() => {
-						// Remove self from the set once settled so the outer loop
-						// can accurately measure how many items are still running.
 						inFlight.delete(promise);
 					});
 
@@ -158,12 +76,9 @@ export class SyncExecutor {
 			}
 
 			if (inFlight.size > 0) {
-				// Wait for the fastest in-flight promise to finish, then
-				// re-enter the inner loop to immediately fill the freed slot.
 				await Promise.race(inFlight);
 			} else {
-				// No slots in flight and inner loop was blocked by the error
-				// threshold — drain is complete, exit.
+				// Inner loop blocked by the error threshold and nothing in flight — done.
 				break;
 			}
 		}
@@ -174,16 +89,6 @@ export class SyncExecutor {
 		return result;
 	}
 
-	/**
-	 * Dispatch a single plan item to its specific execute handler.
-	 *
-	 * Logs the action/reason before dispatch, and clears the path from
-	 * {@link ChangeTracker} after completion (success or error) so the
-	 * file-watcher can resume tracking the file.
-	 *
-	 * @param item   - The plan item to execute.
-	 * @param result - Mutable result object whose counters are incremented here.
-	 */
 	private async executeItem(item: SyncPlanItem, result: SyncResult): Promise<void> {
 		switch (item.action) {
 			case 'adopt':
@@ -217,22 +122,8 @@ export class SyncExecutor {
 			case 'skip':
 				break;
 		}
-
-		this.changeTracker.clearPath(item.path);
 	}
 
-	/**
-	 * Adopt an existing remote object as the new baseline without transferring
-	 * any file content.
-	 *
-	 * Used when local and remote content are identical (same SHA-256 fingerprint)
-	 * so we only need to record the remote metadata in the journal and confirm
-	 * the two sides are in sync.  This is the happy path for the initial sync
-	 * of a vault that already exists on both local disk and S3.
-	 *
-	 * @param item - Plan item with `action: 'adopt'`.
-	 * @throws If the S3 `HeadObject` call fails.
-	 */
 	private async executeAdopt(item: SyncPlanItem): Promise<void> {
 		const remoteKey = this.pathCodec.localToRemote(item.path);
 		const head = await this.s3Provider.headObject(remoteKey);
@@ -241,14 +132,14 @@ export class SyncExecutor {
 		const localContent = localFile instanceof TFile
 			? await readVaultFile(this.app.vault, localFile)
 			: null;
-		const fingerprint = localContent
-			? await this.payloadCodec.fingerprint(localContent)
+		const contentFingerprint = localContent
+			? await fingerprint(localContent)
 			: head?.fingerprint ?? '';
 
 		const record: SyncStateRecord = {
 			path: item.path,
 			remoteKey,
-			contentFingerprint: fingerprint,
+			contentFingerprint,
 			localMtime: localFile instanceof TFile ? localFile.stat.mtime : 0,
 			localSize: localFile instanceof TFile ? localFile.stat.size : 0,
 			remoteClientMtime: head?.clientMtime ?? null,
@@ -263,20 +154,7 @@ export class SyncExecutor {
 		await this.journal.deleteConflict(item.path);
 	}
 
-	/**
-	 * Upload the local file to S3 and persist the resulting ETag as the new baseline.
-	 *
-	 * Supports optimistic concurrency via `If-Match` / `If-None-Match` headers:
-	 * - `expectRemoteAbsent: true`  → `If-None-Match: *` (fail if object already exists)
-	 * - `expectedRemoteEtag` set    → `If-Match: <etag>` (fail if object was modified)
-	 *
-	 * The S3 ETag returned by `uploadFile` is stored in the journal so the next
-	 * planner run can use it as a revision token to detect remote changes.
-	 *
-	 * @param item - Plan item with `action: 'upload'`.
-	 * @throws If the local file is not found in the vault.
-	 * @throws If the S3 upload fails (including ETag mismatch).
-	 */
+	/** Conditional headers guard create-only / update-only uploads. */
 	private async executeUpload(item: SyncPlanItem): Promise<void> {
 		const file = this.app.vault.getAbstractFileByPath(item.path);
 		if (!(file instanceof TFile)) {
@@ -284,28 +162,25 @@ export class SyncExecutor {
 		}
 
 		const content = await readVaultFile(this.app.vault, file);
-		const fingerprint = await this.payloadCodec.fingerprint(content);
-		const payload = this.payloadCodec.encodeForUpload(content);
+		const contentFingerprint = await fingerprint(content);
+		const payload = typeof content === 'string' ? new TextEncoder().encode(content) : content;
 		const remoteKey = this.pathCodec.localToRemote(item.path);
-
-		const uploadMeta: SyncUploadMetadata = {
-			fingerprint,
-			clientMtime: file.stat.mtime,
-			deviceId: this.deviceId,
-			payloadFormat: this.payloadCodec.getActivePayloadFormat(),
-		};
 
 		const etag = await this.s3Provider.uploadFile(remoteKey, payload, {
 			contentType: this.guessContentType(item.path),
 			ifMatch: item.expectRemoteAbsent ? undefined : item.expectedRemoteEtag,
 			ifNoneMatch: item.expectRemoteAbsent ? '*' : undefined,
-			metadata: encodeMetadata(uploadMeta),
+			metadata: {
+				'obsidian-fingerprint': contentFingerprint,
+				'obsidian-mtime': String(file.stat.mtime),
+				'obsidian-device-id': this.deviceId,
+			},
 		});
 
 		const record: SyncStateRecord = {
 			path: item.path,
 			remoteKey,
-			contentFingerprint: fingerprint,
+			contentFingerprint,
 			localMtime: file.stat.mtime,
 			localSize: file.stat.size,
 			remoteClientMtime: file.stat.mtime,
@@ -320,18 +195,7 @@ export class SyncExecutor {
 		await this.journal.deleteConflict(item.path);
 	}
 
-	/**
-	 * Download a remote object, decode/decrypt it, and write it to the local vault.
-	 *
-	 * A `sleep(0)` yield is inserted after the vault write to let Obsidian's
-	 * internal file-indexer process the new file before we try to look it up via
-	 * `getAbstractFileByPath`.  Without this, the TFile may not yet be registered
-	 * and we would throw a false "file not found" error.
-	 *
-	 * @param item - Plan item with `action: 'download'`.
-	 * @throws If the remote object has disappeared between planning and execution.
-	 * @throws If the downloaded file is not visible in the vault after writing.
-	 */
+	/** The sleep(0) lets Obsidian's file indexer observe the written file. */
 	private async executeDownload(item: SyncPlanItem): Promise<void> {
 		const remoteKey = this.pathCodec.localToRemote(item.path);
 		const downloaded = await this.s3Provider.downloadFileWithMetadata(remoteKey);
@@ -339,12 +203,10 @@ export class SyncExecutor {
 			throw new Error(`Remote file disappeared during sync: ${item.path}`);
 		}
 
-		const plaintext = this.payloadCodec.decodeAfterDownload(downloaded.content, downloaded.payloadFormat);
 		const kind = getVaultFileKind(item.path);
+		const content = kind === 'text' ? new TextDecoder().decode(downloaded.content) : downloaded.content;
 
-		await this.writeLocalFile(item.path, kind === 'text' ? new TextDecoder().decode(plaintext) : plaintext);
-		// Yield to the event loop so Obsidian's vault index can register the
-		// newly written file before we attempt to look it up.
+		await this.writeLocalFile(item.path, content);
 		await new Promise((resolve) => window.setTimeout(resolve, 0));
 
 		const localFile = this.app.vault.getAbstractFileByPath(item.path);
@@ -352,14 +214,10 @@ export class SyncExecutor {
 			throw new Error(`Downloaded file not found in vault: ${item.path}`);
 		}
 
-		const fingerprint = await this.payloadCodec.fingerprint(
-			kind === 'text' ? new TextDecoder().decode(plaintext) : plaintext,
-		);
-
 		const record: SyncStateRecord = {
 			path: item.path,
 			remoteKey,
-			contentFingerprint: fingerprint,
+			contentFingerprint: await fingerprint(content),
 			localMtime: localFile.stat.mtime,
 			localSize: localFile.stat.size,
 			remoteClientMtime: downloaded.clientMtime ?? null,
@@ -374,15 +232,6 @@ export class SyncExecutor {
 		await this.journal.deleteConflict(item.path);
 	}
 
-	/**
-	 * Move the local file to the system trash and remove its journal baseline.
-	 *
-	 * Using `fileManager.trashFile` (rather than `vault.delete`) respects the
-	 * user's Obsidian "Deleted files" preference (system trash vs. `.trash` folder).
-	 * If the file no longer exists locally we still clean up the journal entry.
-	 *
-	 * @param item - Plan item with `action: 'delete-local'`.
-	 */
 	private async executeDeleteLocal(item: SyncPlanItem): Promise<void> {
 		const file = this.app.vault.getAbstractFileByPath(item.path);
 		if (file instanceof TFile) {
@@ -393,18 +242,7 @@ export class SyncExecutor {
 		await this.journal.deleteConflict(item.path);
 	}
 
-	/**
-	 * Delete the remote S3 object and remove its journal baseline.
-	 *
-	 * An ETag guard is applied when `expectedRemoteEtag` is set: if the remote
-	 * object's current ETag differs from the planned value, the delete is aborted
-	 * with an error.  This prevents accidentally deleting a file that was updated
-	 * by another device between the planning and execution phases.
-	 *
-	 * @param item - Plan item with `action: 'delete-remote'`.
-	 * @throws If the remote ETag has changed since the plan was built.
-	 * @throws If the S3 delete call fails.
-	 */
+	/** Abort remote deletes when the planned ETag no longer matches. */
 	private async executeDeleteRemote(item: SyncPlanItem): Promise<void> {
 		const remoteKey = this.pathCodec.localToRemote(item.path);
 
@@ -422,20 +260,7 @@ export class SyncExecutor {
 		await this.journal.deleteConflict(item.path);
 	}
 
-	/**
-	 * Create conflict artifact files and record the conflict in the journal.
-	 *
-	 * The {@link ConflictMode} controls which artifacts are produced:
-	 * - `'both'`        — rename local → `LOCAL_<name>`, download remote → `REMOTE_<name>`
-	 * - `'local-only'`  — rename local → `LOCAL_<name>` (remote object is absent)
-	 * - `'remote-only'` — download remote → `REMOTE_<name>` (local file is absent)
-	 *
-	 * The baseline fingerprint is preserved in the conflict record so future
-	 * planner runs can detect when the user has finished resolving (artifacts gone).
-	 *
-	 * @param item - Plan item with `action: 'conflict'` and an optional `conflictMode`.
-	 *   Defaults to `'both'` if `conflictMode` is not set.
-	 */
+	/** Create conflict artifacts; keep baseline fingerprint so later runs detect resolution. */
 	private async executeConflict(item: SyncPlanItem): Promise<void> {
 		const mode: ConflictMode = item.conflictMode ?? 'both';
 		const fileName = item.path.substring(item.path.lastIndexOf('/') + 1);
@@ -454,11 +279,10 @@ export class SyncExecutor {
 			const remoteKey = this.pathCodec.localToRemote(item.path);
 			const downloaded = await this.s3Provider.downloadFileWithMetadata(remoteKey);
 			if (downloaded) {
-				const plaintext = this.payloadCodec.decodeAfterDownload(downloaded.content, downloaded.payloadFormat);
 				const kind = getVaultFileKind(item.path);
 				await this.writeLocalFile(
 					remoteArtifactPath,
-					kind === 'text' ? new TextDecoder().decode(plaintext) : plaintext,
+					kind === 'text' ? new TextDecoder().decode(downloaded.content) : downloaded.content,
 				);
 			}
 		}
@@ -475,30 +299,11 @@ export class SyncExecutor {
 		});
 	}
 
-	/**
-	 * Remove a stale journal baseline for a path that no longer exists on either side.
-	 *
-	 * This happens when both local and remote have been deleted since the last sync.
-	 * We don't need to touch the filesystem or S3 — just clean up the dangling record.
-	 *
-	 * @param item - Plan item with `action: 'forget'`.
-	 */
 	private async executeForget(item: SyncPlanItem): Promise<void> {
 		await this.journal.deleteStateRecord(item.path);
 		await this.journal.deleteConflict(item.path);
 	}
 
-	/**
-	 * Write `content` to the vault at `path`, creating parent folders as needed.
-	 *
-	 * If a file already exists at the path it is updated in-place (modify/modifyBinary).
-	 * Otherwise the file is created from scratch.  Binary content is converted to
-	 * `ArrayBuffer` because the Obsidian vault API does not accept `Uint8Array` for
-	 * binary writes.
-	 *
-	 * @param path    - Vault-relative destination path (forward slashes).
-	 * @param content - File content as a UTF-8 string (text files) or raw bytes (binary).
-	 */
 	private async writeLocalFile(path: string, content: string | Uint8Array): Promise<void> {
 		const existingFile = this.app.vault.getAbstractFileByPath(path);
 		if (existingFile instanceof TFile) {
@@ -518,16 +323,6 @@ export class SyncExecutor {
 		}
 	}
 
-	/**
-	 * Ensure every ancestor folder of `path` exists in the vault, creating any
-	 * missing ones from the root down.
-	 *
-	 * Folder creation must be top-down because `vault.createFolder` requires its
-	 * immediate parent to already exist.  We iterate from the root segment
-	 * inward, creating each level only if the vault doesn't already know about it.
-	 *
-	 * @param path - Vault-relative file path whose parent directories should exist.
-	 */
 	private async ensureParentFolders(path: string): Promise<void> {
 		const parts = path.split('/');
 		parts.pop();
@@ -542,34 +337,10 @@ export class SyncExecutor {
 		}
 	}
 
-	/**
-	 * Determine the HTTP Content-Type for a file based on its extension.
-	 *
-	 * We use a simple binary/text heuristic rather than a full MIME database:
-	 * markdown, plain text, and other text-based vault files get `text/plain`;
-	 * everything else (images, PDFs, etc.) gets `application/octet-stream`.
-	 * This is sufficient for S3, which doesn't serve the files via HTTP in the
-	 * typical sync use-case.
-	 *
-	 * @param path - Vault-relative file path used to determine the file kind.
-	 * @returns An HTTP Content-Type string suitable for the S3 `PutObject` call.
-	 */
 	private guessContentType(path: string): string {
 		return getVaultFileKind(path) === 'text' ? 'text/plain; charset=utf-8' : 'application/octet-stream';
 	}
 
-	/**
-	 * Convert an unknown thrown value into a structured {@link SyncError}.
-	 *
-	 * All item-level errors are marked `recoverable: true` so callers can
-	 * decide whether to retry.  The error is also logged to the console at
-	 * `error` level so problems are always visible.
-	 *
-	 * @param path   - Vault-relative path of the file that failed.
-	 * @param action - The sync action that was being executed.
-	 * @param error  - The raw thrown value (usually an `Error`, but could be anything).
-	 * @returns A {@link SyncError} safe to include in {@link SyncResult.errors}.
-	 */
 	private toSyncError(path: string, action: SyncAction, error: unknown): SyncError {
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		console.error(`[S3 Sync] ${action} failed for ${path}: ${message}`);

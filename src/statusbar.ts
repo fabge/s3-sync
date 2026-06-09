@@ -5,16 +5,15 @@ import { formatRelativeTime } from './utils/time';
 interface StatusIndicatorSpec {
 	icon: string;
 	label: string;
-	emoji: string;
 }
 
 const SYNC_STATUS_SPEC: Record<SyncStatus, StatusIndicatorSpec> = {
-	idle: { icon: 'cloud', label: 'Ready', emoji: '☁️' },
-	synced: { icon: 'check', label: 'Synced', emoji: '✓' },
-	syncing: { icon: 'refresh-cw', label: 'Syncing', emoji: '↻' },
-	error: { icon: 'x', label: 'Error', emoji: '✕' },
-	conflicts: { icon: 'alert-triangle', label: 'Conflict', emoji: '⚠' },
-	disabled: { icon: 'circle-off', label: 'Off', emoji: '○' },
+	idle: { icon: 'cloud', label: 'Ready' },
+	synced: { icon: 'check', label: 'Synced' },
+	syncing: { icon: 'refresh-cw', label: 'Syncing' },
+	error: { icon: 'x', label: 'Error' },
+	conflicts: { icon: 'alert-triangle', label: 'Conflict' },
+	disabled: { icon: 'circle-off', label: 'Off' },
 };
 
 export class StatusBar {

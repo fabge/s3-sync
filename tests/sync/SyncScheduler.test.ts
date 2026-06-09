@@ -113,7 +113,6 @@ describe('SyncScheduler', () => {
 
 			expect(pluginMocks.registerInterval).not.toHaveBeenCalled();
 			expect(setIntervalSpy).not.toHaveBeenCalled();
-			expect(scheduler.getNextSyncTime()).toBeNull();
 		});
 
 		it('does not start when autoSyncEnabled is false', () => {
@@ -123,7 +122,6 @@ describe('SyncScheduler', () => {
 
 			expect(pluginMocks.registerInterval).not.toHaveBeenCalled();
 			expect(setIntervalSpy).not.toHaveBeenCalled();
-			expect(scheduler.getNextSyncTime()).toBeNull();
 		});
 
 		it('does not register a second interval when start is called twice', () => {
@@ -155,7 +153,6 @@ describe('SyncScheduler', () => {
 			scheduler.stop();
 
 			expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
-			expect(scheduler.getNextSyncTime()).toBeNull();
 		});
 
 		it('does nothing when stop is called while the scheduler is not running', () => {
@@ -164,7 +161,6 @@ describe('SyncScheduler', () => {
 			scheduler.stop();
 
 			expect(clearIntervalSpy).not.toHaveBeenCalled();
-			expect(scheduler.getNextSyncTime()).toBeNull();
 		});
 	});
 
@@ -262,18 +258,6 @@ describe('SyncScheduler', () => {
 			expect(setIntervalSpy).toHaveBeenNthCalledWith(1, expect.any(Function), 300000);
 			expect(setIntervalSpy).toHaveBeenNthCalledWith(2, expect.any(Function), 600000);
 			expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
-		});
-
-		it('returns null when disabled and returns a Date when the scheduler is running', () => {
-			const { scheduler } = createSchedulerContext({ syncIntervalMinutes: 5 });
-
-			expect(scheduler.getNextSyncTime()).toBeNull();
-
-			scheduler.start();
-			const nextSyncTime = scheduler.getNextSyncTime();
-
-			expect(nextSyncTime).toBeInstanceOf(Date);
-			expect(nextSyncTime?.toISOString()).toBe('2026-01-01T00:05:00.000Z');
 		});
 	});
 });
