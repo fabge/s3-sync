@@ -91,7 +91,7 @@ interface MockS3Provider {
 	headObject: jest.Mock<Promise<S3HeadResult | null | undefined>, [string]>;
 	uploadFile: jest.Mock<Promise<string>, [string, Uint8Array, Record<string, unknown>]>;
 	downloadFileWithMetadata: jest.Mock<Promise<S3DownloadResult | null>, [string]>;
-	deleteFile: jest.Mock<Promise<void>, [string]>;
+	deleteFile: jest.Mock<Promise<void>, [string, string?]>;
 }
 
 interface MockJournal {
@@ -661,7 +661,10 @@ describe('SyncExecutor', () => {
 			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: new TextEncoder().encode('hello world') }));
 			app.vault.getAbstractFileByPath.mockReturnValue(localFile);
 
-			await internals.executeDownload(createPlanItem('download'));
+			await internals.executeDownload(createPlanItem('download', {
+				expectedLocalMtime: 654,
+				expectedLocalSize: 11,
+			}));
 
 			expect(s3Provider.downloadFileWithMetadata).toHaveBeenCalledWith('remote/notes/test.md');
 			expect(writeSpy).toHaveBeenCalledWith('notes/test.md', 'hello world');
@@ -690,7 +693,11 @@ describe('SyncExecutor', () => {
 			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: plaintext }));
 			app.vault.getAbstractFileByPath.mockReturnValue(localFile);
 
-			await internals.executeDownload(createPlanItem('download', { path: 'notes/test.png' }));
+			await internals.executeDownload(createPlanItem('download', {
+				path: 'notes/test.png',
+				expectedLocalMtime: 777,
+				expectedLocalSize: 3,
+			}));
 
 			expect(writeSpy).toHaveBeenCalledWith('notes/test.png', plaintext);
 			expect(mockedFingerprint).toHaveBeenCalledWith(plaintext);
@@ -701,6 +708,33 @@ describe('SyncExecutor', () => {
 			s3Provider.downloadFileWithMetadata.mockResolvedValue(null);
 
 			await expect(internals.executeDownload(createPlanItem('download'))).rejects.toThrow('Remote file disappeared during sync: notes/test.md');
+		});
+
+		it('does not overwrite a local file that changed after planning', async () => {
+			const { internals, addFile, s3Provider, app } = createExecutorContext();
+			const changedFile = addFile('notes/test.md', 'changed', { mtime: 999, size: 7 });
+			const writeSpy = jest.spyOn(internals, 'writeLocalFile').mockResolvedValue(undefined);
+			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult());
+			app.vault.getAbstractFileByPath.mockReturnValue(changedFile);
+
+			await expect(internals.executeDownload(createPlanItem('download', {
+				expectedLocalMtime: 654,
+				expectedLocalSize: 11,
+			}))).rejects.toThrow('Local file notes/test.md changed since planning. Skipping download.');
+			expect(writeSpy).not.toHaveBeenCalled();
+		});
+
+		it('does not overwrite a file that appeared after planning', async () => {
+			const { internals, addFile, s3Provider, app } = createExecutorContext();
+			const newFile = addFile('notes/test.md', 'new local');
+			const writeSpy = jest.spyOn(internals, 'writeLocalFile').mockResolvedValue(undefined);
+			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult());
+			app.vault.getAbstractFileByPath.mockReturnValue(newFile);
+
+			await expect(internals.executeDownload(createPlanItem('download', {
+				expectLocalAbsent: true,
+			}))).rejects.toThrow('Local file notes/test.md appeared since planning. Skipping download.');
+			expect(writeSpy).not.toHaveBeenCalled();
 		});
 
 		it('throws when the downloaded file is not found after writing', async () => {
@@ -719,7 +753,10 @@ describe('SyncExecutor', () => {
 			const file = addFile('notes/test.md', 'delete me');
 			app.vault.getAbstractFileByPath.mockReturnValue(file);
 
-			await internals.executeDeleteLocal(createPlanItem('delete-local'));
+			await internals.executeDeleteLocal(createPlanItem('delete-local', {
+				expectedLocalMtime: 200,
+				expectedLocalSize: 9,
+			}));
 
 			expect(app.fileManager.trashFile).toHaveBeenCalledWith(file);
 			expect(journal.deleteStateRecord).toHaveBeenCalledWith('notes/test.md');
@@ -735,27 +772,28 @@ describe('SyncExecutor', () => {
 			expect(journal.deleteStateRecord).toHaveBeenCalledWith('notes/test.md');
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
 		});
+
+		it('does not trash a local file that changed after planning', async () => {
+			const { internals, app, addFile } = createExecutorContext();
+			const file = addFile('notes/test.md', 'changed', { mtime: 999, size: 7 });
+			app.vault.getAbstractFileByPath.mockReturnValue(file);
+
+			await expect(internals.executeDeleteLocal(createPlanItem('delete-local', {
+				expectedLocalMtime: 200,
+				expectedLocalSize: 9,
+			}))).rejects.toThrow('Local file notes/test.md changed since planning. Skipping delete.');
+			expect(app.fileManager.trashFile).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('executeDeleteRemote', () => {
-		it('checks the remote ETag before deleting and throws on mismatch', async () => {
-			const { internals, s3Provider } = createExecutorContext();
-			s3Provider.headObject.mockResolvedValue(createHeadResult({ etag: 'different-etag' }));
-
-			await expect(internals.executeDeleteRemote(createPlanItem('delete-remote', { expectedRemoteEtag: 'expected-etag' }))).rejects.toThrow(
-				'Remote file notes/test.md changed since planning (expected ETag expected-etag, got different-etag). Skipping delete.',
-			);
-			expect(s3Provider.deleteFile).not.toHaveBeenCalled();
-		});
-
-		it('deletes the remote file when the expected ETag matches', async () => {
+		it('deletes the remote file with an atomic ETag precondition', async () => {
 			const { internals, s3Provider, journal } = createExecutorContext();
-			s3Provider.headObject.mockResolvedValue(createHeadResult({ etag: 'expected-etag' }));
 
 			await internals.executeDeleteRemote(createPlanItem('delete-remote', { expectedRemoteEtag: 'expected-etag' }));
 
-			expect(s3Provider.headObject).toHaveBeenCalledWith('remote/notes/test.md');
-			expect(s3Provider.deleteFile).toHaveBeenCalledWith('remote/notes/test.md');
+			expect(s3Provider.headObject).not.toHaveBeenCalled();
+			expect(s3Provider.deleteFile).toHaveBeenCalledWith('remote/notes/test.md', 'expected-etag');
 			expect(journal.deleteStateRecord).toHaveBeenCalledWith('notes/test.md');
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
 		});
@@ -766,7 +804,7 @@ describe('SyncExecutor', () => {
 			await internals.executeDeleteRemote(createPlanItem('delete-remote'));
 
 			expect(s3Provider.headObject).not.toHaveBeenCalled();
-			expect(s3Provider.deleteFile).toHaveBeenCalledWith('remote/notes/test.md');
+			expect(s3Provider.deleteFile).toHaveBeenCalledWith('remote/notes/test.md', undefined);
 		});
 	});
 
@@ -789,7 +827,11 @@ describe('SyncExecutor', () => {
 			});
 			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: new TextEncoder().encode('remote body') }));
 
-			await internals.executeConflict(createPlanItem('conflict', { conflictMode: 'both' }));
+			await internals.executeConflict(createPlanItem('conflict', {
+				conflictMode: 'both',
+				expectedLocalMtime: 200,
+				expectedLocalSize: 10,
+			}));
 
 			expect(app.vault.rename).toHaveBeenCalledWith(file, 'notes/LOCAL_test.md');
 			expect(writeSpy).toHaveBeenCalledWith('notes/REMOTE_test.md', 'remote body');
@@ -801,6 +843,31 @@ describe('SyncExecutor', () => {
 				baselineFingerprint: 'baseline-fingerprint',
 				detectedAt: expect.any(Number),
 			}));
+		});
+
+		it('does not rename a local conflict file that changed after planning', async () => {
+			const { internals, addFile, app } = createExecutorContext();
+			const file = addFile('notes/test.md', 'changed', { mtime: 999, size: 7 });
+			app.vault.getAbstractFileByPath.mockReturnValue(file);
+
+			await expect(internals.executeConflict(createPlanItem('conflict', {
+				conflictMode: 'local-only',
+				expectedLocalMtime: 200,
+				expectedLocalSize: 10,
+			}))).rejects.toThrow('Local file notes/test.md changed since planning. Skipping conflict.');
+			expect(app.vault.rename).not.toHaveBeenCalled();
+		});
+
+		it('does not create a local conflict artifact when the local file disappeared', async () => {
+			const { internals, app } = createExecutorContext();
+			app.vault.getAbstractFileByPath.mockReturnValue(null);
+
+			await expect(internals.executeConflict(createPlanItem('conflict', {
+				conflictMode: 'local-only',
+				expectedLocalMtime: 200,
+				expectedLocalSize: 10,
+			}))).rejects.toThrow('Local file notes/test.md changed since planning. Skipping conflict.');
+			expect(app.vault.rename).not.toHaveBeenCalled();
 		});
 
 		it('creates only a LOCAL_ artifact for root-level local-only conflicts', async () => {

@@ -2,7 +2,6 @@ import {
     getFilename,
     getExtension,
     matchesAnyGlob,
-    isConflictFile,
     isPluginOwnPath,
 } from '../../src/utils/paths';
 
@@ -47,24 +46,6 @@ describe('Path Utils', () => {
 
         it('should return false for empty patterns', () => {
             expect(matchesAnyGlob('file.md', [])).toBe(false);
-        });
-    });
-
-    describe('isConflictFile', () => {
-        it('should detect LOCAL_ prefix', () => {
-            expect(isConflictFile('folder/LOCAL_file.md')).toBe(true);
-        });
-
-        it('should detect REMOTE_ prefix', () => {
-            expect(isConflictFile('folder/REMOTE_file.md')).toBe(true);
-        });
-
-        it('should not match normal files', () => {
-            expect(isConflictFile('file.md')).toBe(false);
-        });
-
-        it('should match at filename level only', () => {
-            expect(isConflictFile('LOCAL_folder/file.md')).toBe(false);
         });
     });
 

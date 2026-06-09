@@ -206,6 +206,7 @@ export class SyncExecutor {
 		const kind = getVaultFileKind(item.path);
 		const content = kind === 'text' ? new TextDecoder().decode(downloaded.content) : downloaded.content;
 
+		this.assertLocalUnchanged(item, 'download');
 		await this.writeLocalFile(item.path, content);
 		await new Promise((resolve) => window.setTimeout(resolve, 0));
 
@@ -235,6 +236,7 @@ export class SyncExecutor {
 	private async executeDeleteLocal(item: SyncPlanItem): Promise<void> {
 		const file = this.app.vault.getAbstractFileByPath(item.path);
 		if (file instanceof TFile) {
+			this.assertLocalUnchanged(item, 'delete');
 			await this.app.fileManager.trashFile(file);
 		}
 
@@ -246,16 +248,7 @@ export class SyncExecutor {
 	private async executeDeleteRemote(item: SyncPlanItem): Promise<void> {
 		const remoteKey = this.pathCodec.localToRemote(item.path);
 
-		if (item.expectedRemoteEtag) {
-			const head = await this.s3Provider.headObject(remoteKey);
-			if (head && head.etag !== item.expectedRemoteEtag) {
-				throw new Error(
-					`Remote file ${item.path} changed since planning (expected ETag ${item.expectedRemoteEtag}, got ${head.etag}). Skipping delete.`,
-				);
-			}
-		}
-
-		await this.s3Provider.deleteFile(remoteKey);
+		await this.s3Provider.deleteFile(remoteKey, item.expectedRemoteEtag);
 		await this.journal.deleteStateRecord(item.path);
 		await this.journal.deleteConflict(item.path);
 	}
@@ -269,10 +262,12 @@ export class SyncExecutor {
 		const remoteArtifactPath = dir ? `${dir}/REMOTE_${fileName}` : `REMOTE_${fileName}`;
 
 		if (mode === 'both' || mode === 'local-only') {
+			this.assertLocalUnchanged(item, 'conflict');
 			const file = this.app.vault.getAbstractFileByPath(item.path);
-			if (file instanceof TFile) {
-				await this.app.vault.rename(file, localArtifactPath);
+			if (!(file instanceof TFile)) {
+				throw new Error(`File not found for conflict: ${item.path}`);
 			}
+			await this.app.vault.rename(file, localArtifactPath);
 		}
 
 		if (mode === 'both' || mode === 'remote-only') {
@@ -352,6 +347,29 @@ export class SyncExecutor {
 
 	private guessContentType(path: string): string {
 		return getVaultFileKind(path) === 'text' ? 'text/plain; charset=utf-8' : 'application/octet-stream';
+	}
+
+	private assertLocalUnchanged(item: SyncPlanItem, operation: string): void {
+		const file = this.app.vault.getAbstractFileByPath(item.path);
+
+		if (item.expectLocalAbsent) {
+			if (file instanceof TFile) {
+				throw new Error(`Local file ${item.path} appeared since planning. Skipping ${operation}.`);
+			}
+			return;
+		}
+
+		if (item.expectedLocalMtime === undefined || item.expectedLocalSize === undefined) {
+			return;
+		}
+
+		if (!(file instanceof TFile)) {
+			throw new Error(`Local file ${item.path} changed since planning. Skipping ${operation}.`);
+		}
+
+		if (file.stat.mtime !== item.expectedLocalMtime || file.stat.size !== item.expectedLocalSize) {
+			throw new Error(`Local file ${item.path} changed since planning. Skipping ${operation}.`);
+		}
 	}
 
 	private toSyncError(path: string, action: SyncAction, error: unknown): SyncError {

@@ -13,7 +13,7 @@ import {
 	SyncStateRecord,
 } from '../types';
 import { normalizeEntityTag } from '../utils/etags';
-import { isConflictFile, matchesAnyGlob, getFilename, isPluginOwnPath } from '../utils/paths';
+import { matchesAnyGlob, getFilename, isPluginOwnPath } from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 import { fingerprint } from '../utils/fingerprint';
 import { SyncJournal } from './SyncJournal';
@@ -97,6 +97,7 @@ export class SyncPlanner {
 				if (!ctx.remote) {
 					item.expectRemoteAbsent = true;
 				}
+				this.attachLocalPreconditions(item, ctx);
 				plan.push(item);
 			}
 		}
@@ -106,14 +107,24 @@ export class SyncPlanner {
 
 	private async discoverState(): Promise<Map<string, PathContext>> {
 		const contexts = new Map<string, PathContext>();
-		const conflictOriginalPaths = new Set<string>();
+		const conflictArtifacts = new Map<string, string>();
+
+		for (const conflict of await this.journal.getAllConflicts()) {
+			if (this.shouldExclude(conflict.path)) continue;
+
+			this.getOrCreate(contexts, conflict.path).conflict = conflict;
+			if (conflict.localArtifactPath) {
+				conflictArtifacts.set(conflict.localArtifactPath, conflict.path);
+			}
+			if (conflict.remoteArtifactPath) {
+				conflictArtifacts.set(conflict.remoteArtifactPath, conflict.path);
+			}
+		}
 
 		for (const file of this.app.vault.getFiles()) {
-			if (isConflictFile(file.path)) {
-				const original = this.getOriginalFromConflictFilename(file.path);
-				if (original) {
-					conflictOriginalPaths.add(original);
-				}
+			const conflictPath = conflictArtifacts.get(file.path);
+			if (conflictPath) {
+				this.getOrCreate(contexts, conflictPath).hasConflictArtifacts = true;
 				continue;
 			}
 
@@ -137,15 +148,6 @@ export class SyncPlanner {
 		for (const baseline of await this.journal.getAllStateRecords()) {
 			if (this.shouldExclude(baseline.path)) continue;
 			this.getOrCreate(contexts, baseline.path).baseline = baseline;
-		}
-
-		for (const conflict of await this.journal.getAllConflicts()) {
-			if (this.shouldExclude(conflict.path)) continue;
-			this.getOrCreate(contexts, conflict.path).conflict = conflict;
-		}
-
-		for (const path of conflictOriginalPaths) {
-			this.getOrCreate(contexts, path).hasConflictArtifacts = true;
 		}
 
 		return contexts;
@@ -236,26 +238,22 @@ export class SyncPlanner {
 		return created;
 	}
 
-	private getOriginalFromConflictFilename(conflictPath: string): string | null {
-		const filename = getFilename(conflictPath);
-		const dir = conflictPath.includes('/')
-			? conflictPath.substring(0, conflictPath.lastIndexOf('/'))
-			: '';
+	private attachLocalPreconditions(item: SyncPlanItem, ctx: PathContext): void {
+		if (!this.needsLocalPrecondition(item)) return;
 
-		let originalName: string;
-		if (filename.startsWith('LOCAL_')) {
-			originalName = filename.substring(6);
-		} else if (filename.startsWith('REMOTE_')) {
-			originalName = filename.substring(7);
+		if (ctx.local) {
+			item.expectedLocalMtime = ctx.local.mtime;
+			item.expectedLocalSize = ctx.local.size;
 		} else {
-			return null;
+			item.expectLocalAbsent = true;
 		}
+	}
 
-		return dir ? `${dir}/${originalName}` : originalName;
+	private needsLocalPrecondition(item: SyncPlanItem): boolean {
+		return item.action === 'download' || item.action === 'delete-local' || item.action === 'conflict';
 	}
 
 	private shouldExclude(path: string): boolean {
-		if (isConflictFile(path)) return true;
 		if (isPluginOwnPath(path, this.app.vault.configDir)) return true;
 		if (getFilename(path).startsWith('.obsidian-s3-sync')) return true;
 		return matchesAnyGlob(path, this.settings.excludePatterns);

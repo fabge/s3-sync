@@ -103,7 +103,7 @@ export class S3Provider {
             }));
 
             for (const item of response.Contents ?? []) {
-                if (item.Key) {
+                if (item.Key && !item.Key.endsWith('/')) {
                     objects.push({
                         key: item.Key,
                         size: item.Size || 0,
@@ -272,10 +272,11 @@ export class S3Provider {
 		return `"${normalizeEntityTag(etag)}"`;
 	}
 
-    async deleteFile(key: string): Promise<void> {
+    async deleteFile(key: string, ifMatch?: string): Promise<void> {
         await this.getClient().send(new DeleteObjectCommand({
             Bucket: this.settings.bucket,
             Key: key,
+            IfMatch: this.toConditionalEntityTag(ifMatch),
         }));
     }
 

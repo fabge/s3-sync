@@ -36,11 +36,6 @@ export function matchesAnyGlob(path: string, patterns: string[]): boolean {
     return patterns.some((pattern) => matchGlob(path, pattern));
 }
 
-export function isConflictFile(path: string): boolean {
-    const filename = getFilename(path);
-    return filename.startsWith('LOCAL_') || filename.startsWith('REMOTE_');
-}
-
 /** Must match the `id` in manifest.json. */
 const PLUGIN_ID = 's3-sync';
 

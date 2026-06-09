@@ -72,6 +72,9 @@ export interface SyncPlanItem {
 	reason: string;
 	expectedRemoteEtag?: string;
 	expectRemoteAbsent?: boolean;
+	expectedLocalMtime?: number;
+	expectedLocalSize?: number;
+	expectLocalAbsent?: boolean;
 }
 
 export interface SyncResult {

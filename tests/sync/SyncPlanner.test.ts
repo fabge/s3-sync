@@ -83,7 +83,6 @@ interface SyncPlannerPrivate {
 	classifyRemote(ctx: PathContextLike): Promise<RemoteClassification>;
 	sortPlan(plan: SyncPlanItem[]): SyncPlanItem[];
 	shouldExclude(path: string): boolean;
-	getOriginalFromConflictFilename(conflictPath: string): string | null;
 }
 
 interface MockS3Provider {
@@ -100,7 +99,7 @@ interface MockSyncJournal {
 interface MockSyncPathCodec {
 	getListPrefix: jest.Mock<string, []>;
 	isMetadataKey: jest.Mock<boolean, [string]>;
-	remoteToLocal: jest.Mock<string | null, [string]>;
+	remoteToLocal: jest.Mock<string, [string]>;
 	localToRemote: jest.Mock<string, [string]>;
 }
 
@@ -299,6 +298,7 @@ describe('SyncPlanner', () => {
 					path: 'remote-only.md',
 					action: 'download',
 					expectedRemoteEtag: 'remote-etag',
+					expectLocalAbsent: true,
 				}),
 			]);
 		});
@@ -383,6 +383,8 @@ describe('SyncPlanner', () => {
 					action: 'conflict',
 					conflictMode: 'local-only',
 					expectRemoteAbsent: true,
+					expectedLocalMtime: 100,
+					expectedLocalSize: 7,
 				}),
 			]);
 		});
@@ -468,7 +470,7 @@ describe('SyncPlanner', () => {
 	});
 
 	describe('discoverState', () => {
-		it('excludes conflict artifacts from locals, excludes metadata remotes, and attaches journal state', async () => {
+		it('excludes recorded conflict artifacts from locals, excludes metadata remotes, and attaches journal state', async () => {
 			addVaultFile('dir/note.md');
 			addVaultFile('dir/LOCAL_note.md');
 			addVaultFile('dir/REMOTE_note.md');
@@ -481,7 +483,11 @@ describe('SyncPlanner', () => {
 				createStateRecord({ path: 'dir/note.md' }),
 			]);
 			journal.getAllConflicts.mockResolvedValue([
-				createConflictRecord({ path: 'dir/note.md' }),
+				createConflictRecord({
+					path: 'dir/note.md',
+					localArtifactPath: 'dir/LOCAL_note.md',
+					remoteArtifactPath: 'dir/REMOTE_note.md',
+				}),
 			]);
 
 			const contexts = await getPlannerPrivate(planner).discoverState();
@@ -498,6 +504,16 @@ describe('SyncPlanner', () => {
 			expect(contexts.has('dir/LOCAL_note.md')).toBe(false);
 			expect(contexts.has('dir/REMOTE_note.md')).toBe(false);
 			expect(contexts.has('.obsidian-s3-sync/engine.json')).toBe(false);
+		});
+
+		it('keeps LOCAL_ and REMOTE_ files when they are not recorded conflict artifacts', async () => {
+			addVaultFile('dir/LOCAL_note.md');
+			addVaultFile('dir/REMOTE_note.md');
+
+			const contexts = await getPlannerPrivate(planner).discoverState();
+
+			expect(contexts.has('dir/LOCAL_note.md')).toBe(true);
+			expect(contexts.has('dir/REMOTE_note.md')).toBe(true);
 		});
 
 		it('excludes local, remote, baseline, and conflict entries that match exclusion rules', async () => {
@@ -813,8 +829,9 @@ describe('SyncPlanner', () => {
 	});
 
 	describe('shouldExclude', () => {
-		it('excludes conflict artifact files', () => {
-			expect(getPlannerPrivate(planner).shouldExclude('folder/LOCAL_note.md')).toBe(true);
+		it('does not globally exclude LOCAL_ and REMOTE_ filenames', () => {
+			expect(getPlannerPrivate(planner).shouldExclude('folder/LOCAL_note.md')).toBe(false);
+			expect(getPlannerPrivate(planner).shouldExclude('folder/REMOTE_note.md')).toBe(false);
 		});
 
 		it('excludes files whose filename starts with .obsidian-s3-sync', () => {
@@ -830,21 +847,4 @@ describe('SyncPlanner', () => {
 		});
 	});
 
-	describe('getOriginalFromConflictFilename', () => {
-		it('returns the original root path for LOCAL_ files', () => {
-			expect(getPlannerPrivate(planner).getOriginalFromConflictFilename('LOCAL_foo.md')).toBe('foo.md');
-		});
-
-		it('returns the original root path for REMOTE_ files', () => {
-			expect(getPlannerPrivate(planner).getOriginalFromConflictFilename('REMOTE_foo.md')).toBe('foo.md');
-		});
-
-		it('returns the original nested path for conflict artifacts in a directory', () => {
-			expect(getPlannerPrivate(planner).getOriginalFromConflictFilename('dir/LOCAL_foo.md')).toBe('dir/foo.md');
-		});
-
-		it('returns null for non-conflict filenames', () => {
-			expect(getPlannerPrivate(planner).getOriginalFromConflictFilename('dir/foo.md')).toBeNull();
-		});
-	});
 });
