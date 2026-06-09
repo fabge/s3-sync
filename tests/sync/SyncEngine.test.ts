@@ -12,14 +12,6 @@ jest.mock('../../src/sync/SyncPathCodec', () => ({
 	SyncPathCodec: jest.fn(),
 }));
 
-jest.mock('../../src/sync/SyncPayloadCodec', () => ({
-	SyncPayloadCodec: jest.fn(),
-}));
-
-jest.mock('../../src/sync/ChangeTracker', () => ({
-	ChangeTracker: jest.fn(),
-}));
-
 jest.mock('../../src/sync/SyncPlanner', () => ({
 	SyncPlanner: jest.fn(),
 }));
@@ -30,12 +22,10 @@ jest.mock('../../src/sync/SyncExecutor', () => ({
 
 import { App } from 'obsidian';
 import { S3Provider } from '../../src/storage/S3Provider';
-import { ChangeTracker } from '../../src/sync/ChangeTracker';
 import { SyncEngine } from '../../src/sync/SyncEngine';
 import { SyncExecutor } from '../../src/sync/SyncExecutor';
 import { SyncJournal } from '../../src/sync/SyncJournal';
 import { SyncPathCodec } from '../../src/sync/SyncPathCodec';
-import { SyncPayloadCodec } from '../../src/sync/SyncPayloadCodec';
 import { SyncPlanner } from '../../src/sync/SyncPlanner';
 import { DEFAULT_SETTINGS, S3SyncSettings, SyncPlanItem, SyncResult } from '../../src/types';
 
@@ -54,16 +44,8 @@ interface MockJournal {
 	resetForDestination: jest.Mock<Promise<void>, [string]>;
 }
 
-interface MockChangeTracker {
-	setSyncInProgress: jest.Mock<void, [boolean]>;
-}
-
 interface MockPathCodec {
 	readonly kind: 'path-codec';
-}
-
-interface MockPayloadCodec {
-	readonly kind: 'payload-codec';
 }
 
 interface MockS3Provider {
@@ -81,8 +63,6 @@ interface EngineContext {
 	s3Provider: MockS3Provider;
 	journal: MockJournal;
 	pathCodec: MockPathCodec;
-	payloadCodec: MockPayloadCodec;
-	changeTracker: MockChangeTracker;
 	planner: MockPlanner;
 	executor: MockExecutor;
 	settings: S3SyncSettings;
@@ -154,12 +134,6 @@ function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineCon
 	const pathCodec: MockPathCodec = {
 		kind: 'path-codec',
 	};
-	const payloadCodec: MockPayloadCodec = {
-		kind: 'payload-codec',
-	};
-	const changeTracker: MockChangeTracker = {
-		setSyncInProgress: jest.fn(),
-	};
 	const planner: MockPlanner = {
 		countInScopeLocalFiles: jest.fn().mockResolvedValue(10),
 		buildPlan: jest.fn().mockResolvedValue([]),
@@ -176,8 +150,6 @@ function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineCon
 		s3Provider as unknown as S3Provider,
 		journal as unknown as SyncJournal,
 		pathCodec as unknown as SyncPathCodec,
-		payloadCodec as unknown as SyncPayloadCodec,
-		changeTracker as unknown as ChangeTracker,
 		settings,
 		'device-123',
 	);
@@ -187,8 +159,6 @@ function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineCon
 		s3Provider,
 		journal,
 		pathCodec,
-		payloadCodec,
-		changeTracker,
 		planner,
 		executor,
 		settings,
@@ -259,34 +229,27 @@ describe('SyncEngine', () => {
 		});
 	});
 
-	/**
-	 * Covers SyncEngine's wiring to ChangeTracker so dirty-path suppression is enabled
-	 * at sync start and always released in the finally block.
-	 */
-	describe('ChangeTracker integration', () => {
-		it('sets ChangeTracker syncInProgress to true at start and false in finally on success', async () => {
+	describe('in-progress guard', () => {
+		it('reports in-progress during a sync and clears it afterward', async () => {
 			const context = createEngineContext();
 			const plannerDeferred = createDeferred<SyncPlanItem[]>();
 			context.planner.buildPlan.mockReturnValueOnce(plannerDeferred.promise);
 
 			const syncPromise = context.engine.sync();
-
-			expect(context.changeTracker.setSyncInProgress).toHaveBeenNthCalledWith(1, true);
+			expect(context.engine.isInProgress()).toBe(true);
 
 			plannerDeferred.resolve([]);
 			await syncPromise;
-
-			expect(context.changeTracker.setSyncInProgress).toHaveBeenNthCalledWith(2, false);
+			expect(context.engine.isInProgress()).toBe(false);
 		});
 
-		it('resets ChangeTracker syncInProgress to false when sync fails', async () => {
+		it('clears the in-progress flag when sync fails', async () => {
 			const context = createEngineContext();
 			context.planner.buildPlan.mockRejectedValueOnce(new Error('planner exploded'));
 
 			await context.engine.sync();
 
-			expect(context.changeTracker.setSyncInProgress).toHaveBeenNthCalledWith(1, true);
-			expect(context.changeTracker.setSyncInProgress).toHaveBeenNthCalledWith(2, false);
+			expect(context.engine.isInProgress()).toBe(false);
 		});
 	});
 
@@ -502,7 +465,6 @@ describe('SyncEngine', () => {
 				context.s3Provider,
 				context.journal,
 				context.pathCodec,
-				context.payloadCodec,
 				updatedSettings,
 			);
 			expect(mockedSyncExecutor).toHaveBeenLastCalledWith(
@@ -510,8 +472,6 @@ describe('SyncEngine', () => {
 				context.s3Provider,
 				context.journal,
 				context.pathCodec,
-				context.payloadCodec,
-				context.changeTracker,
 				'device-123',
 			);
 		});

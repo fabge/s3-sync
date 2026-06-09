@@ -4,9 +4,7 @@ import { S3SyncSettingTab } from './settings';
 import { StatusBar } from './statusbar';
 import { S3Provider } from './storage/S3Provider';
 import { SyncJournal } from './sync/SyncJournal';
-import { ChangeTracker } from './sync/ChangeTracker';
 import { SyncPathCodec } from './sync/SyncPathCodec';
-import { SyncPayloadCodec } from './sync/SyncPayloadCodec';
 import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
 import { registerPluginCommands } from './commands';
@@ -18,9 +16,7 @@ export default class S3SyncPlugin extends Plugin {
 	private s3Provider: S3Provider | null = null;
 	private statusBar: StatusBar | null = null;
 	private syncJournal: SyncJournal | null = null;
-	private changeTracker: ChangeTracker | null = null;
 	private pathCodec: SyncPathCodec | null = null;
-	private payloadCodec: SyncPayloadCodec | null = null;
 	private syncEngine: SyncEngine | null = null;
 	private syncScheduler: SyncScheduler | null = null;
 
@@ -40,16 +36,12 @@ export default class S3SyncPlugin extends Plugin {
 		await this.syncJournal.initialize();
 
 		this.pathCodec = new SyncPathCodec();
-		this.payloadCodec = new SyncPayloadCodec();
-		this.changeTracker = new ChangeTracker(this.app);
 
 		this.syncEngine = new SyncEngine(
 			this.app,
 			this.s3Provider,
 			this.syncJournal,
 			this.pathCodec,
-			this.payloadCodec,
-			this.changeTracker,
 			this.settings,
 			deviceId,
 		);
@@ -132,7 +124,6 @@ export default class S3SyncPlugin extends Plugin {
 		this.s3Provider?.updateSettings(this.settings);
 		this.syncEngine?.updateSettings(this.settings);
 		this.syncScheduler?.updateSettings(this.settings);
-		this.changeTracker?.updateExcludePatterns(this.settings.excludePatterns);
 	}
 
 	onSettingsChanged(): void {
@@ -165,18 +156,12 @@ export default class S3SyncPlugin extends Plugin {
 	}
 
 	private startSyncServices(): void {
-		if (!this.settings.syncEnabled) {
-			return;
-		}
-
-		this.changeTracker?.startTracking(this.settings.excludePatterns);
-		if (this.settings.autoSyncEnabled) {
+		if (this.settings.syncEnabled && this.settings.autoSyncEnabled) {
 			this.syncScheduler?.start();
 		}
 	}
 
 	private stopSyncServices(): void {
-		this.changeTracker?.stopTracking();
 		this.syncScheduler?.stop();
 	}
 
@@ -223,7 +208,7 @@ export default class S3SyncPlugin extends Plugin {
 	}
 
 	async resetSyncJournal(): Promise<void> {
-		if (!this.syncEngine || !this.changeTracker) {
+		if (!this.syncEngine) {
 			throw new Error('Sync engine is not initialized yet.');
 		}
 
@@ -232,7 +217,6 @@ export default class S3SyncPlugin extends Plugin {
 		}
 
 		await this.syncEngine.resetJournalForCurrentDestination();
-		this.changeTracker.clearAll();
 		this.updateStatusBarFromSettings();
 	}
 

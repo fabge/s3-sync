@@ -44,12 +44,7 @@ export function decide(input: DecisionInput): SyncPlanItem {
 	}
 
 	const isFirstSync = input.local === 'L+' || input.remote === 'R+';
-
-	if (isFirstSync) {
-		return decideNoBaseline(input);
-	}
-
-	if (!input.hasBaseline) {
+	if (isFirstSync || !input.hasBaseline) {
 		return decideNoBaseline(input);
 	}
 

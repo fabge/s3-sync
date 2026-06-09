@@ -1,16 +1,7 @@
 /**
- * Sync Engine Module
- *
- * Thin orchestrator that coordinates the three-way reconciliation sync:
- *   1. Acquire mutex (prevent concurrent syncs)
- *   2. Signal ChangeTracker that sync is active
- *   3. Build a plan via {@link SyncPlanner}
- *   4. Execute the plan via {@link SyncExecutor}
- *   5. Record `lastSuccessfulSyncAt` in journal metadata
- *   6. Release mutex and signal ChangeTracker
- *
- * All heavy lifting (state discovery, classification, decision-making,
- * file I/O, S3 operations) lives in the planner and executor modules.
+ * Thin orchestrator for a sync cycle: acquire mutex → guard the destination →
+ * plan ({@link SyncPlanner}) → safety checks → execute ({@link SyncExecutor}) →
+ * record `lastSuccessfulSyncAt`. All heavy lifting lives in the planner/executor.
  */
 
 import { App } from 'obsidian';
@@ -18,10 +9,8 @@ import { S3SyncSettings, SyncPlanItem, SyncResult } from '../types';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
 import { SyncPathCodec } from './SyncPathCodec';
-import { SyncPayloadCodec } from './SyncPayloadCodec';
 import { SyncPlanner } from './SyncPlanner';
 import { SyncExecutor } from './SyncExecutor';
-import { ChangeTracker } from './ChangeTracker';
 import { computeDestinationFingerprint } from './DestinationFingerprint';
 
 const DESTINATION_FINGERPRINT_KEY = 'destinationFingerprint';
@@ -36,12 +25,6 @@ async function withJournalContext<T>(phase: string, operation: () => Promise<T>)
 	}
 }
 
-/**
- * SyncEngine — orchestrates a complete sync cycle.
- *
- * Constructed once in `main.ts` and reused for every sync trigger
- * (scheduled, manual, or on-startup).
- */
 export class SyncEngine {
 	private isSyncing = false;
 
@@ -54,62 +37,33 @@ export class SyncEngine {
 	]);
 
 	/**
-	 * @param app           - The Obsidian App instance (vault, fileManager, etc.).
-	 * @param s3Provider    - S3 abstraction layer; constructed from current settings.
-	 * @param journal       - IndexedDB journal for per-file baseline persistence.
-	 * @param pathCodec     - Converts vault-relative paths ↔ S3 object keys.
-	 * @param payloadCodec  - Encodes file content for upload/download (currently a plaintext passthrough).
-	 * @param changeTracker - Dirty-path tracker; suppressed during active syncs.
-	 * @param settings      - Full plugin settings snapshot used to configure
-	 *   the planner (e.g. exclude patterns) and safety threshold.
-	 * @param deviceId      - Stable per-device identifier embedded in S3 metadata
-	 *   so other devices can attribute the last write.
+	 * @param deviceId - vault-local install identity (intentionally outside
+	 *   settings, since it is not a user-configurable preference).
 	 */
 	constructor(
 		private app: App,
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
 		private pathCodec: SyncPathCodec,
-		private payloadCodec: SyncPayloadCodec,
-		private changeTracker: ChangeTracker,
 		private settings: S3SyncSettings,
 		private deviceId: string,
 	) {}
 
-	/**
-	 * Update runtime settings (e.g. after the user changes them in the settings tab).
-	 *
-	 * `deviceId` intentionally stays outside the settings object because it is
-	 * a vault-local installation identity, not a user-configurable preference.
-	 *
-	 * @param settings - The new settings snapshot.
-	 */
 	updateSettings(settings: S3SyncSettings): void {
 		this.settings = settings;
 	}
 
-	/**
-	 * Check whether a sync cycle is currently in progress.
-	 *
-	 * @returns `true` while {@link sync} is executing.
-	 */
 	isInProgress(): boolean {
 		return this.isSyncing;
 	}
 
-	/**
-	 * Run a full sync cycle: plan → execute → persist metadata.
-	 *
-	 * @returns A {@link SyncResult} summarising what happened.
-	 * @throws If called while another sync is already running.
-	 */
+	/** Run a full sync cycle: plan → execute → persist metadata. Throws if one is already running. */
 	async sync(): Promise<SyncResult> {
 		if (this.isSyncing) {
 			throw new Error('Sync already in progress');
 		}
 
 		this.isSyncing = true;
-		this.changeTracker.setSyncInProgress(true);
 
 		try {
 			const startFingerprint = computeDestinationFingerprint(this.settings);
@@ -124,7 +78,6 @@ export class SyncEngine {
 				this.s3Provider,
 				this.journal,
 				this.pathCodec,
-				this.payloadCodec,
 				this.settings,
 			);
 			const inScopeFileCount = await planner.countInScopeLocalFiles();
@@ -146,8 +99,6 @@ export class SyncEngine {
 				this.s3Provider,
 				this.journal,
 				this.pathCodec,
-				this.payloadCodec,
-				this.changeTracker,
 				this.deviceId,
 			);
 			const result = await executor.execute(plan);
@@ -159,10 +110,8 @@ export class SyncEngine {
 
 			return result;
 		} catch (error) {
-			// Unexpected top-level failure (e.g. SyncPlanner threw, network
-			// unavailable before any item started).  Wrap as a SyncResult so
-			// callers always receive a uniform return type and can surface the
-			// error via the status bar without crashing the plugin.
+			// Wrap any top-level failure as a SyncResult so callers get a uniform
+			// return type and can surface the error without crashing the plugin.
 			const message = error instanceof Error ? error.message : 'Unknown error';
 			console.error(`[S3 Sync] Sync failed: ${message}`);
 
@@ -180,7 +129,6 @@ export class SyncEngine {
 			};
 		} finally {
 			this.isSyncing = false;
-			this.changeTracker.setSyncInProgress(false);
 		}
 	}
 
@@ -192,6 +140,7 @@ export class SyncEngine {
 		);
 	}
 
+	/** Abort if too large a share of in-scope files would change at once. */
 	private assertProtectModifyThreshold(
 		plan: SyncPlanItem[],
 		inScopeFileCount: number,
@@ -213,6 +162,11 @@ export class SyncEngine {
 		}
 	}
 
+	/**
+	 * Block syncing a destination whose fingerprint differs from the one this
+	 * journal was created against (stale-journal / wrong-bucket protection).
+	 * First sight of a destination records its fingerprint and proceeds.
+	 */
 	private async reconcileDestinationFingerprint(current: string): Promise<SyncResult | null> {
 		const stored = await withJournalContext(
 			'reading stored destination fingerprint',
@@ -236,6 +190,7 @@ export class SyncEngine {
 		);
 	}
 
+	/** Block a plan that would delete local files against a destination with no successful sync history. */
 	private async checkDestructivePlan(plan: SyncPlanItem[]): Promise<string | null> {
 		const deleteLocalCount = plan.filter((item) => item.action === 'delete-local').length;
 		if (deleteLocalCount === 0) {

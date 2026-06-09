@@ -114,25 +114,13 @@ export interface DecisionInput {
 	remoteFingerprint?: string;
 }
 
-/**
- * Tag identifying how an uploaded object's bytes are encoded.
- *
- * Currently the only value is `'plaintext-v1'` — the type is kept as a union
- * so future encoders (compression, encryption) can be added without changing
- * call sites. The plain string check at every decode site keeps unknown
- * formats from being silently treated as plaintext.
- */
-export type PayloadFormat = 'plaintext-v1';
-
 export interface S3HeadResult {
 	etag: string;
 	size: number;
 	lastModified: number;
-	syncVersion?: number;
 	fingerprint?: string;
 	clientMtime?: number;
 	deviceId?: string;
-	payloadFormat?: PayloadFormat;
 }
 
 export interface S3DownloadResult {
@@ -140,18 +128,15 @@ export interface S3DownloadResult {
 	etag: string;
 	size: number;
 	lastModified: number;
-	syncVersion?: number;
 	fingerprint?: string;
 	clientMtime?: number;
 	deviceId?: string;
-	payloadFormat?: PayloadFormat;
 }
 
 export interface SyncUploadMetadata {
 	fingerprint: string;
 	clientMtime: number;
 	deviceId: string;
-	payloadFormat: PayloadFormat;
 }
 
 export type SyncStatus =

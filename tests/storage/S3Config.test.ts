@@ -1,7 +1,7 @@
 import {
 	buildS3ClientConfig,
 	validateConnectionSettings,
-} from '../../src/storage/S3Config';
+} from '../../src/storage/S3Provider';
 import { S3SyncSettings } from '../../src/types';
 
 function createTestSettings(

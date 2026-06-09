@@ -1,106 +1,39 @@
 /**
- * Converts between local vault paths and S3 remote keys.
- *
- * Centralises optional prefix logic so callers never assemble S3 keys
- * manually. All path ↔ key translations go through this codec, ensuring a
- * single source of truth for the S3 key layout and internal metadata paths.
+ * Converts between vault paths and S3 keys, applying an optional sync prefix —
+ * the single source of truth for the S3 key layout. All methods are pure.
  */
 
 import { addPrefix, removePrefix, normalizePrefix } from '../utils/paths';
 
-/**
- * Hidden directory stored inside the sync prefix on S3.
- *
- * Contains plugin-internal objects (lock files, etc.) that must not be
- * treated as user vault files. The directory is prefixed with a dot so it
- * is hidden on most file browsers and is reliably detected by
- * `isMetadataKey()`.
- */
+// Hidden dir (dot-prefixed) for plugin-internal objects; detected by isMetadataKey().
 const METADATA_DIR = '.obsidian-s3-sync';
 
-/**
- * Converts vault-relative file paths to S3 object keys and back, applying
- * a configurable sync prefix to every key.
- *
- * All methods are pure transforms — no I/O is performed.  The codec is
- * constructed with an optional prefix (e.g. `"vault"`) and exposes helper
- * methods used by `SyncPlanner`, `SyncExecutor`, and `S3Provider` to
- * build or decode S3 keys without duplicating prefix logic.
- *
- * @example
- * ```ts
- * const codec = new SyncPathCodec('vault');
- * codec.localToRemote('Notes/readme.md'); // → 'vault/Notes/readme.md'
- * codec.remoteToLocal('vault/Notes/readme.md'); // → 'Notes/readme.md'
- * codec.isMetadataKey('vault/.obsidian-s3-sync/.vault.enc'); // → true
- * ```
- */
 export class SyncPathCodec {
 	private normalizedPrefix: string;
 
-	/**
-	 * Creates a new `SyncPathCodec` with an optional prefix.
-	 *
-	 * The prefix is normalised (leading/trailing slashes stripped) so that
-	 * callers do not need to sanitise it before construction.
-	 *
-	 * @param syncPrefix - The S3 key prefix under which all vault files are
-	 *   stored (e.g. `"vault"` maps `Notes/a.md` → `vault/Notes/a.md`).
-	 *   Pass an empty string for no prefix (files stored at bucket root).
-	 */
+	/** @param syncPrefix - S3 key prefix for all vault files (`''` = bucket root). */
 	constructor(syncPrefix = '') {
 		this.normalizedPrefix = normalizePrefix(syncPrefix);
 	}
 
-	/**
-	 * Converts a vault-relative local path to its corresponding S3 object key.
-	 *
-	 * @param localPath - A vault-relative path such as `"Notes/readme.md"`.
-	 * @returns The S3 key with the sync prefix applied, e.g. `"vault/Notes/readme.md"`.
-	 */
+	/** Vault path → S3 key (e.g. `Notes/a.md` → `vault/Notes/a.md`). */
 	localToRemote(localPath: string): string {
 		return addPrefix(localPath, this.normalizedPrefix);
 	}
 
-	/**
-	 * Converts an S3 object key back to a vault-relative local path.
-	 *
-	 * @param remoteKey - An S3 key such as `"vault/Notes/readme.md"`.
-	 * @returns The vault-relative path (e.g. `"Notes/readme.md"`), or `null`
-	 *   if the key does not start with the configured sync prefix and therefore
-	 *   does not belong to this vault's sync namespace.
-	 */
+	/** S3 key → vault path, or `null` if the key is outside this prefix. */
 	remoteToLocal(remoteKey: string): string | null {
 		return removePrefix(remoteKey, this.normalizedPrefix);
 	}
 
-	/**
-	 * Returns `true` when the given S3 key refers to a plugin-internal
-	 * metadata object rather than a user vault file.
-	 *
-	 * Metadata keys reside under the `METADATA_DIR` subdirectory inside the
-	 * sync prefix (e.g. `vault/.obsidian-s3-sync/...`).  The planner uses
-	 * this check to skip metadata objects when listing remote vault files.
-	 *
-	 * @param remoteKey - The S3 object key to test.
-	 * @returns `true` if the key belongs to the metadata directory.
-	 */
+	/** `true` if the key is a plugin-internal metadata object, not a user file. */
 	isMetadataKey(remoteKey: string): boolean {
 		const relativePath = removePrefix(remoteKey, this.normalizedPrefix);
 		return relativePath?.startsWith(`${METADATA_DIR}/`) ?? false;
 	}
 
-	/**
-	 * Returns the S3 key prefix to use when listing all objects in the
-	 * sync namespace (passed as the `Prefix` parameter to `ListObjectsV2`).
-	 *
-	 * The trailing slash ensures only keys inside the prefix directory are
-	 * returned and not a key that is the prefix itself.
-	 *
-	 * @returns A string like `"vault/"`, or an empty string when no prefix is configured.
-	 */
+	/** Prefix (with trailing slash) for listing the sync namespace, or `''` when unprefixed. */
 	getListPrefix(): string {
 		return this.normalizedPrefix ? `${this.normalizedPrefix}/` : '';
 	}
-
 }
