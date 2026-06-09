@@ -9,7 +9,7 @@ This rebuild intentionally keeps the plugin small:
 - **No encryption layer** — plaintext objects in S3
 - **Three-way reconciliation** — local vault, remote S3 state, and the last successful sync baseline are compared on every run
 - **Conflict-safe** — conflicting edits produce `LOCAL_` and `REMOTE_` files instead of silently overwriting data
-- **Protect-modify guard** — sync aborts when too many files would change at once
+- **Protect-modify guard** — sync aborts when too large a share of the already-synced files would change at once
 - **No desktop-only runtime dependency** — built around Obsidian APIs, IndexedDB, and web APIs rather than Node/Electron modules
 
 ## What it does
@@ -45,7 +45,7 @@ The settings surface is intentionally small:
 | **Auto-sync** | Runs sync on a fixed interval. |
 | **Sync interval** | Interval for auto-sync: 1, 2, 5, 10, 15, or 30 minutes. |
 | **Sync on startup** | Runs one sync after the vault finishes loading. |
-| **Abort if changed files exceed threshold** | Stops sync when too many incoming or destructive actions would happen at once. |
+| **Abort if changed files exceed threshold** | Aborts sync when the share of already-synced files that would change exceeds the threshold. The first sync to a destination is exempt; use 100 to disable. |
 | **Exclude patterns** | One glob pattern per line for files or folders that should never be synced. |
 | **Reset sync journal** | Clears remembered baselines for the current bucket and region so the next sync starts fresh against that destination. |
 
@@ -65,7 +65,6 @@ This plugin is a sync tool, so by design it enumerates vault files and reads or 
 | :--- | :--- |
 | `vault.getFiles()` | Enumerates vault files so the planner can discover local state. |
 | `vault.read()` / `vault.readBinary()` | Reads file contents before upload and when hashing ambiguous local changes. |
-| `vault.on('create' / 'modify' / 'delete' / 'rename')` | Tracks dirty paths between sync runs so the next cycle can prioritize changed files. |
 | IndexedDB journal | Loads per-file baselines, conflict records, and sync metadata from earlier successful runs. |
 
 ### What the plugin writes

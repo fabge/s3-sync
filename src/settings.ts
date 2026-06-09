@@ -171,7 +171,7 @@ export class S3SyncSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('Abort if changed files exceed threshold')
 			.setDesc(
-				'Stops sync when too many incoming or destructive actions are about to happen. Use 100 to disable the protection.',
+				'Aborts sync when the share of already-synced files that would change exceeds this percentage. The first sync to a destination is exempt. Use 100 to disable the protection.',
 			)
 			.addText((text) => {
 				text.setPlaceholder('50');
