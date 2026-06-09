@@ -237,8 +237,4 @@ export default class S3SyncPlugin extends Plugin {
 	getS3Provider(): S3Provider | null {
 		return this.s3Provider;
 	}
-
-	getSyncJournal(): SyncJournal | null {
-		return this.syncJournal;
-	}
 }

@@ -1,16 +1,4 @@
-/**
- * High-level wrapper over the AWS SDK v3 S3 client — the single point of
- * contact between the plugin and S3.
- *
- * Notable behaviours:
- * - **Lazy client**: built on first use; `updateSettings` nullifies it so the
- *   next call rebuilds with new config.
- * - **Obsidian HTTP handler**: requests route through `ObsidianHttpHandler`
- *   (`requestUrl`) to sidestep browser CORS.
- * - **ETag normalization**: S3 wraps ETags in quotes; all returned ETags are
- *   bare hex. `toConditionalEntityTag` re-adds quotes for `If-Match` headers.
- * - **NoSuchKey → null**: read-style methods return `null` on 404 instead of throwing.
- */
+/** S3 adapter. Uses ObsidianHttpHandler for CORS-safe requests and normalizes ETags. */
 
 import {
     S3Client,
@@ -27,11 +15,7 @@ import { S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncSettings } from '..
 import { normalizeEntityTag } from '../utils/etags';
 import { ObsidianHttpHandler } from './ObsidianHttpHandler';
 
-/**
- * Build the AWS S3 client config. The `requestHandler` routes requests through
- * Obsidian's `requestUrl` (see {@link ObsidianHttpHandler}) to sidestep CORS.
- */
-export function buildS3ClientConfig(settings: S3SyncSettings): S3ClientConfig {
+function buildS3ClientConfig(settings: S3SyncSettings): S3ClientConfig {
     return {
         region: settings.region || 'eu-central-1',
         credentials: {
@@ -42,8 +26,7 @@ export function buildS3ClientConfig(settings: S3SyncSettings): S3ClientConfig {
     };
 }
 
-/** Return a list of human-readable errors for any missing required connection settings. */
-export function validateConnectionSettings(settings: S3SyncSettings): string[] {
+function validateConnectionSettings(settings: S3SyncSettings): string[] {
     const errors: string[] = [];
     if (!settings.bucket) errors.push('Bucket name is required');
     if (!settings.accessKeyId) errors.push('Access Key ID is required');
@@ -56,17 +39,11 @@ export class S3Provider {
     private client: S3Client | null = null;
     private settings: S3SyncSettings;
 
-    /**
-     * @param settings - Full plugin settings; only connection fields are used.
-     * @param client   - Optional pre-built client (E2E tests inject a
-     *   Node-compatible client instead of the Obsidian HTTP handler).
-     */
     constructor(settings: S3SyncSettings, client?: S3Client) {
         this.settings = settings;
         this.client = client ?? null;
     }
 
-    /** Replace settings and invalidate the cached client; safe to call mid-session. */
     updateSettings(settings: S3SyncSettings): void {
         this.settings = settings;
         this.client = null;
@@ -79,10 +56,6 @@ export class S3Provider {
         return this.client;
     }
 
-    /**
-     * Validate settings, then confirm auth + bucket access with a `HeadBucket`.
-     * Throws with a user-friendly message for the common failure modes.
-     */
     async testConnection(): Promise<string> {
         const errors = validateConnectionSettings(this.settings);
         if (errors.length > 0) {
@@ -116,10 +89,6 @@ export class S3Provider {
         }
     }
 
-    /**
-     * List all objects under `prefix`, paginating over continuation tokens so
-     * buckets with >1000 objects are fully materialized.
-     */
     async listObjects(prefix: string, recursive = true): Promise<S3ObjectInfo[]> {
         const client = this.getClient();
         const objects: S3ObjectInfo[] = [];
@@ -150,10 +119,7 @@ export class S3Provider {
         return objects;
     }
 
-    /**
-     * Download content and all plugin-managed metadata in one request, avoiding
-     * the TOCTOU window of a separate head+get. Returns `null` on 404.
-     */
+    /** Get content and metadata together to avoid a separate head+get race. */
     async downloadFileWithMetadata(key: string): Promise<S3DownloadResult | null> {
         try {
             const response = await this.getClient().send(new GetObjectCommand({
@@ -176,12 +142,7 @@ export class S3Provider {
         }
     }
 
-    /**
-     * Normalize an AWS SDK response body into a `Uint8Array` regardless of the
-     * runtime-specific form it takes. In the Obsidian/Electron runtime the body
-     * arrives as a `ReadableStream<Uint8Array>`, but Node streams, blobs,
-     * async-iterables, and the SDK's `transformToByteArray` helper are all handled.
-     */
+    /** Normalize AWS SDK response bodies across Obsidian/Electron and tests. */
     private async bodyToUint8Array(body: unknown, key: string): Promise<Uint8Array> {
         const responseBody = body as
             | Uint8Array
@@ -239,7 +200,6 @@ export class S3Provider {
         return result;
     }
 
-    /** Fetch plugin metadata for an object via `HeadObject`. Returns `null` on 404. */
     async headObject(key: string): Promise<S3HeadResult | null> {
         try {
             const response = await this.getClient().send(new HeadObjectCommand({
@@ -256,7 +216,6 @@ export class S3Provider {
         }
     }
 
-    /** Map a raw HeadObject/GetObject response into {@link S3HeadResult} (ETag quotes stripped). */
     private toS3HeadResult(response: {
         ETag?: string;
         ContentLength?: number;
@@ -274,7 +233,6 @@ export class S3Provider {
         };
     }
 
-    /** Parse a string S3 metadata value as a base-10 integer, or `undefined` if absent/NaN. */
     private parseMetadataNumber(value?: string): number | undefined {
         if (!value) {
             return undefined;
@@ -283,41 +241,27 @@ export class S3Provider {
         return Number.isNaN(parsed) ? undefined : parsed;
     }
 
-    /**
-     * Upload content to `key`, optionally with conditional headers for optimistic
-     * concurrency: `ifNoneMatch: '*'` create-only, `ifMatch: <etag>` update-only.
-     * ETags must be bare hex; quotes are re-added before forwarding to the SDK.
-     * Returns the new object's ETag (quotes stripped).
-     */
+    /** Upload with optional conditional headers; ETag quotes are re-added for S3. */
 	async uploadFile(
 		key: string,
 		content: Uint8Array | string,
-		options?: string | { contentType?: string; ifMatch?: string; ifNoneMatch?: string; metadata?: Record<string, string> }
+		options?: { contentType?: string; ifMatch?: string; ifNoneMatch?: string; metadata?: Record<string, string> }
 	): Promise<string> {
         const body = typeof content === 'string' ? new TextEncoder().encode(content) : content;
-
-        const contentType = typeof options === 'string' ? options : options?.contentType;
-		const ifMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifMatch);
-		const ifNoneMatch = typeof options === 'string' ? undefined : this.toConditionalEntityTag(options?.ifNoneMatch);
-		const metadata = typeof options === 'string' ? undefined : options?.metadata;
 
         const response = await this.getClient().send(new PutObjectCommand({
             Bucket: this.settings.bucket,
             Key: key,
             Body: body,
-            ContentType: contentType,
-            IfMatch: ifMatch,
-            IfNoneMatch: ifNoneMatch,
-            Metadata: metadata,
+            ContentType: options?.contentType,
+            IfMatch: this.toConditionalEntityTag(options?.ifMatch),
+            IfNoneMatch: this.toConditionalEntityTag(options?.ifNoneMatch),
+            Metadata: options?.metadata,
         }));
 
 		return normalizeEntityTag(response.ETag);
 	}
 
-	/**
-	 * Re-quote a bare ETag for conditional headers. Passthrough for `undefined`,
-	 * the `*` wildcard, and already-quoted (`"…"` / `W/"…"`) values.
-	 */
 	private toConditionalEntityTag(etag?: string): string | undefined {
 		if (!etag) {
 			return undefined;
@@ -328,7 +272,6 @@ export class S3Provider {
 		return `"${normalizeEntityTag(etag)}"`;
 	}
 
-    /** Delete a single object. S3's DeleteObject is idempotent (no throw on missing key). */
     async deleteFile(key: string): Promise<void> {
         await this.getClient().send(new DeleteObjectCommand({
             Bucket: this.settings.bucket,
@@ -336,7 +279,6 @@ export class S3Provider {
         }));
     }
 
-    /** Destroy the underlying client; call from `onunload`. Safe to call repeatedly. */
     destroy(): void {
         if (this.client) {
             this.client.destroy();
@@ -345,7 +287,6 @@ export class S3Provider {
     }
 }
 
-/** Slimmed async-iterator contract for typing the async-iterable response-body form. */
 interface AsyncIteratorLike<T> {
     next(): Promise<IteratorResult<T>>;
 }

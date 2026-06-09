@@ -16,10 +16,6 @@ jest.mock('../../src/utils/fingerprint', () => ({
 	fingerprint: jest.fn(),
 }));
 
-jest.mock('../../src/sync/SyncObjectMetadata', () => ({
-	encodeMetadata: jest.fn(),
-}));
-
 jest.mock('../../src/utils/vaultFiles', () => ({
 	getVaultFileKind: jest.fn(),
 	readVaultFile: jest.fn(),
@@ -38,7 +34,6 @@ import {
 	SyncResult,
 	SyncStateRecord,
 } from '../../src/types';
-import { encodeMetadata } from '../../src/sync/SyncObjectMetadata';
 import { getVaultFileKind, readVaultFile, toArrayBuffer } from '../../src/utils/vaultFiles';
 import { fingerprint } from '../../src/utils/fingerprint';
 
@@ -147,7 +142,6 @@ interface Deferred<T> {
 	reject: (reason?: unknown) => void;
 }
 
-const mockedEncodeMetadata = jest.mocked(encodeMetadata);
 const mockedGetVaultFileKind = jest.mocked(getVaultFileKind);
 const mockedReadVaultFile = jest.mocked(readVaultFile);
 const mockedToArrayBuffer = jest.mocked(toArrayBuffer);
@@ -330,7 +324,6 @@ function createExecutorContext(): ExecutorContext {
 describe('SyncExecutor', () => {
 	beforeEach(() => {
 		jest.clearAllMocks();
-		mockedEncodeMetadata.mockReturnValue({ encoded: 'true' });
 		mockedGetVaultFileKind.mockImplementation((path: string) => path.endsWith('.md') ? 'text' : 'binary');
 		mockedReadVaultFile.mockResolvedValue('vault-content');
 		mockedFingerprint.mockResolvedValue('fingerprint-1');
@@ -612,16 +605,15 @@ describe('SyncExecutor', () => {
 
 			expect(mockedReadVaultFile).toHaveBeenCalledWith(app.vault, file);
 			expect(mockedFingerprint).toHaveBeenCalledWith('upload me');
-			expect(mockedEncodeMetadata).toHaveBeenCalledWith({
-				fingerprint: 'upload-fingerprint',
-				clientMtime: 444,
-				deviceId: 'device-123',
-			});
 			expect(s3Provider.uploadFile).toHaveBeenCalledWith('remote/notes/test.md', new TextEncoder().encode('upload me'), {
 				contentType: 'text/plain; charset=utf-8',
 				ifMatch: undefined,
 				ifNoneMatch: '*',
-				metadata: { encoded: 'true' },
+				metadata: {
+					'obsidian-fingerprint': 'upload-fingerprint',
+					'obsidian-mtime': '444',
+					'obsidian-device-id': 'device-123',
+				},
 			});
 			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',

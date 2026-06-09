@@ -1,13 +1,4 @@
-/**
- * AWS SDK v3 HttpHandler that routes every S3 request through Obsidian's
- * `requestUrl` instead of `fetch`.
- *
- * Why: Obsidian plugins run in an Electron browser context where `fetch` to
- * arbitrary S3 endpoints is blocked by CORS. `requestUrl` runs outside the
- * browser sandbox (via Electron IPC) and is not CORS-restricted. Wired in as
- * the `requestHandler` in `buildS3ClientConfig`; the SDK calls `handle()` for
- * every request. The other methods are stubs the Smithy interface requires.
- */
+/** AWS SDK v3 HttpHandler via Obsidian `requestUrl`; required to bypass browser CORS. */
 
 import { requestUrl, RequestUrlParam } from 'obsidian';
 import { HttpRequest, HttpResponse } from '@smithy/protocol-http';
@@ -81,7 +72,6 @@ export class ObsidianHttpHandler {
         }
     }
 
-    /** Reassemble the SDK's decomposed URL (protocol/host/port/path/query) into a string. */
     private buildUrl(request: HttpRequest): string {
         let protocol = request.protocol || 'https:';
         if (!protocol.endsWith(':')) protocol += ':';
@@ -114,11 +104,7 @@ export class ObsidianHttpHandler {
         return url;
     }
 
-    /**
-     * Wrap response bytes as the body type the SDK expects. The browser checksum
-     * middleware only accepts `ReadableStream`, so prefer a single-chunk stream;
-     * fall back to `Blob` where `ReadableStream` is unavailable.
-     */
+    /** Browser checksum middleware expects ReadableStream when available. */
     private createResponseBody(arrayBuffer: ArrayBuffer): ReadableStream<Uint8Array> | Blob {
         if (typeof ReadableStream === 'function') {
             const chunk = new Uint8Array(arrayBuffer);

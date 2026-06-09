@@ -1,8 +1,4 @@
-/**
- * Thin orchestrator for a sync cycle: acquire mutex → guard the destination →
- * plan ({@link SyncPlanner}) → safety checks → execute ({@link SyncExecutor}) →
- * record `lastSuccessfulSyncAt`. All heavy lifting lives in the planner/executor.
- */
+/** Thin sync-cycle orchestrator; planner/executor do the heavy lifting. */
 
 import { App } from 'obsidian';
 import { S3SyncSettings, SyncPlanItem, SyncResult } from '../types';
@@ -36,10 +32,6 @@ export class SyncEngine {
 		'conflict',
 	]);
 
-	/**
-	 * @param deviceId - vault-local install identity (intentionally outside
-	 *   settings, since it is not a user-configurable preference).
-	 */
 	constructor(
 		private app: App,
 		private s3Provider: S3Provider,
@@ -57,7 +49,6 @@ export class SyncEngine {
 		return this.isSyncing;
 	}
 
-	/** Run a full sync cycle: plan → execute → persist metadata. Throws if one is already running. */
 	async sync(): Promise<SyncResult> {
 		if (this.isSyncing) {
 			throw new Error('Sync already in progress');
@@ -72,7 +63,6 @@ export class SyncEngine {
 				return destinationGuardResult;
 			}
 
-			// Phase 1 — Plan
 			const planner = new SyncPlanner(
 				this.app,
 				this.s3Provider,
@@ -93,7 +83,6 @@ export class SyncEngine {
 			}
 			this.assertProtectModifyThreshold(plan, inScopeFileCount);
 
-			// Phase 2 — Execute
 			const executor = new SyncExecutor(
 				this.app,
 				this.s3Provider,
@@ -103,15 +92,12 @@ export class SyncEngine {
 			);
 			const result = await executor.execute(plan);
 
-			// Phase 3 — Persist metadata
 			if (result.success) {
 				await this.journal.setMetadata(LAST_SUCCESSFUL_SYNC_KEY, Date.now());
 			}
 
 			return result;
 		} catch (error) {
-			// Wrap any top-level failure as a SyncResult so callers get a uniform
-			// return type and can surface the error without crashing the plugin.
 			const message = error instanceof Error ? error.message : 'Unknown error';
 			console.error(`[S3 Sync] Sync failed: ${message}`);
 
@@ -140,7 +126,6 @@ export class SyncEngine {
 		);
 	}
 
-	/** Abort if too large a share of in-scope files would change at once. */
 	private assertProtectModifyThreshold(
 		plan: SyncPlanItem[],
 		inScopeFileCount: number,
@@ -162,11 +147,7 @@ export class SyncEngine {
 		}
 	}
 
-	/**
-	 * Block syncing a destination whose fingerprint differs from the one this
-	 * journal was created against (stale-journal / wrong-bucket protection).
-	 * First sight of a destination records its fingerprint and proceeds.
-	 */
+	/** Stale-journal / wrong-bucket protection. First sight records the destination. */
 	private async reconcileDestinationFingerprint(current: string): Promise<SyncResult | null> {
 		const stored = await withJournalContext(
 			'reading stored destination fingerprint',
@@ -190,7 +171,6 @@ export class SyncEngine {
 		);
 	}
 
-	/** Block a plan that would delete local files against a destination with no successful sync history. */
 	private async checkDestructivePlan(plan: SyncPlanItem[]): Promise<string | null> {
 		const deleteLocalCount = plan.filter((item) => item.action === 'delete-local').length;
 		if (deleteLocalCount === 0) {

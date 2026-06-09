@@ -1,11 +1,8 @@
 /** Type definitions for the minimal AWS-only sync build. */
 
-export type S3ProviderType = 'aws';
-
 export type SyncIntervalMinutes = 1 | 2 | 5 | 10 | 15 | 30;
 
 export interface S3SyncSettings {
-	provider: S3ProviderType;
 	region: string;
 	bucket: string;
 	accessKeyId: string;
@@ -19,7 +16,6 @@ export interface S3SyncSettings {
 }
 
 export const DEFAULT_SETTINGS: S3SyncSettings = {
-	provider: 'aws',
 	region: 'eu-central-1',
 	bucket: '',
 	accessKeyId: '',
@@ -131,12 +127,6 @@ export interface S3DownloadResult {
 	fingerprint?: string;
 	clientMtime?: number;
 	deviceId?: string;
-}
-
-export interface SyncUploadMetadata {
-	fingerprint: string;
-	clientMtime: number;
-	deviceId: string;
 }
 
 export type SyncStatus =

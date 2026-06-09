@@ -1,11 +1,4 @@
-/**
- * Discovers local + remote state, classifies each path, and feeds {@link decide}
- * to produce an ordered {@link SyncPlanItem} list. Side-effect free — reads from
- * vault, S3, and journal but never writes (all mutation is in SyncExecutor).
- *
- * Lazy hashing: mtime+size and ETag fast-paths are tried first; SHA-256
- * fingerprints are only computed when those are ambiguous.
- */
+/** Read-only sync planner. Hashes content only after mtime/size and ETag fast paths fail. */
 
 import { App, TFile } from 'obsidian';
 import {
@@ -28,30 +21,23 @@ import { SyncPathCodec } from './SyncPathCodec';
 import { S3Provider } from '../storage/S3Provider';
 import { decide } from './SyncDecisionTable';
 
-/** Local file snapshot captured during discovery; holds the TFile to avoid a second lookup. */
 interface LocalSnapshot {
 	file: TFile;
 	mtime: number;
 	size: number;
 }
 
-/** Remote object snapshot; `head` is fetched lazily only when the ETag fast-path is insufficient. */
 interface RemoteSnapshot {
 	objectInfo: S3ObjectInfo;
 	head?: S3HeadResult;
 }
 
-/**
- * All known state for one path. `undefined` fields mean absence: no `local` →
- * not on disk; no `baseline` → never synced. Fingerprints are populated lazily.
- */
 interface PathContext {
 	path: string;
 	local?: LocalSnapshot;
 	remote?: RemoteSnapshot;
 	baseline?: SyncStateRecord;
 	conflict?: ConflictRecord;
-	/** `true` when a `LOCAL_`/`REMOTE_` artifact for this path exists on disk. */
 	hasConflictArtifacts: boolean;
 	localFingerprint?: string;
 	remoteFingerprint?: string;
@@ -76,10 +62,6 @@ export class SyncPlanner {
 		return count;
 	}
 
-	/**
-	 * Discover full state, classify every path, and return an ordered action
-	 * list. `skip` items are dropped; the rest are sorted by {@link sortPlan}.
-	 */
 	async buildPlan(): Promise<SyncPlanItem[]> {
 		const contexts = await this.discoverState();
 		const plan: SyncPlanItem[] = [];
@@ -114,11 +96,6 @@ export class SyncPlanner {
 		return this.sortPlan(plan);
 	}
 
-	/**
-	 * Aggregate local files, remote objects, journal baselines, and conflict
-	 * records into one {@link PathContext} per path. Conflict artifacts
-	 * (`LOCAL_`/`REMOTE_`) are not sync targets but flag their original path.
-	 */
 	private async discoverState(): Promise<Map<string, PathContext>> {
 		const contexts = new Map<string, PathContext>();
 		const conflictOriginalPaths = new Set<string>();
@@ -166,11 +143,6 @@ export class SyncPlanner {
 		return contexts;
 	}
 
-	/**
-	 * Classify the local side: L0 absent, L+ new (no baseline), L= unchanged
-	 * (mtime+size match, or fingerprint matches despite an mtime-only touch),
-	 * LΔ modified.
-	 */
 	private async classifyLocal(ctx: PathContext): Promise<LocalClassification> {
 		if (!ctx.local) return 'L0';
 		if (!ctx.baseline) return 'L+';
@@ -183,11 +155,6 @@ export class SyncPlanner {
 		return fp === ctx.baseline.contentFingerprint ? 'L=' : 'LΔ';
 	}
 
-	/**
-	 * Classify the remote side: R0 absent, R+ new (no baseline), R= matching
-	 * ETag (fast-path) or fingerprint, RΔ modified. ETags are cheap revision
-	 * tokens only; SHA-256 of content is the authoritative identity.
-	 */
 	private async classifyRemote(ctx: PathContext): Promise<RemoteClassification> {
 		if (!ctx.remote) return 'R0';
 		if (!ctx.baseline) return 'R+';
@@ -201,7 +168,6 @@ export class SyncPlanner {
 		return ctx.remoteFingerprint === ctx.baseline.contentFingerprint ? 'R=' : 'RΔ';
 	}
 
-	/** Compute and memoize the local file's content fingerprint. */
 	private async computeLocalFingerprint(ctx: PathContext): Promise<string> {
 		if (ctx.localFingerprint) return ctx.localFingerprint;
 
@@ -213,11 +179,6 @@ export class SyncPlanner {
 		return ctx.localFingerprint;
 	}
 
-	/**
-	 * Populate `ctx.remoteFingerprint` with the fewest S3 calls: HeadObject
-	 * metadata if present, else a full download as a last resort (older objects
-	 * lacking the fingerprint header).
-	 */
 	private async ensureRemoteFingerprint(ctx: PathContext): Promise<void> {
 		if (ctx.remoteFingerprint) return;
 		if (!ctx.remote) return;
@@ -238,12 +199,6 @@ export class SyncPlanner {
 		ctx.remoteFingerprint = await fingerprint(downloaded.content);
 	}
 
-	/**
-	 * Order the plan so dependencies are respected: journal-only updates
-	 * (adopt/forget) first, deletions before transfers, conflicts last so
-	 * artifact creation can't shadow a clean download/upload. Lexicographic
-	 * within a tier for determinism.
-	 */
 	private sortPlan(plan: SyncPlanItem[]): SyncPlanItem[] {
 		const order: Record<string, number> = {
 			'adopt': 0,
@@ -273,7 +228,6 @@ export class SyncPlanner {
 		return created;
 	}
 
-	/** Recover the original path from a `LOCAL_`/`REMOTE_` artifact filename, or `null`. */
 	private getOriginalFromConflictFilename(conflictPath: string): string | null {
 		const filename = getFilename(conflictPath);
 		const dir = conflictPath.includes('/')
@@ -292,10 +246,6 @@ export class SyncPlanner {
 		return dir ? `${dir}/${originalName}` : originalName;
 	}
 
-	/**
-	 * Exclude conflict artifacts, the plugin's own settings directory (holds
-	 * credentials), internal `.obsidian-s3-sync*` files, and user glob patterns.
-	 */
 	private shouldExclude(path: string): boolean {
 		if (isConflictFile(path)) return true;
 		if (isPluginOwnPath(path, this.app.vault.configDir)) return true;

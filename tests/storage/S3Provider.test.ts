@@ -8,7 +8,6 @@ import { S3SyncSettings } from '../../src/types';
 
 function createSettings(overrides: Partial<S3SyncSettings> = {}): S3SyncSettings {
 	return {
-		provider: 'aws',
 		region: 'us-east-1',
 		bucket: 'test-bucket',
 		accessKeyId: 'test-key',

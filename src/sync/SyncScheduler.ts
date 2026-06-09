@@ -1,8 +1,4 @@
-/**
- * Drives periodic sync by wrapping `window.setInterval` in Obsidian's
- * `registerInterval` (auto-cleared on unload) and delegating each tick to
- * {@link SyncEngine.sync}. Responsible only for timing/lifecycle.
- */
+/** Periodic sync timer wrapper. */
 
 import { Plugin } from 'obsidian';
 import { SyncEngine } from './SyncEngine';
@@ -32,7 +28,6 @@ export class SyncScheduler {
         this.onSyncError = callbacks.onSyncError;
     }
 
-    /** Adopt new settings and restart the timer if the interval may have changed. */
     updateSettings(settings: S3SyncSettings): void {
         this.settings = settings;
         if (this.isEnabled && this.settings.autoSyncEnabled) {
@@ -41,7 +36,6 @@ export class SyncScheduler {
         }
     }
 
-    /** Start the periodic timer. No-op if already running or sync/auto-sync is disabled. */
     start(): void {
         if (this.isEnabled) return;
         if (!this.settings.syncEnabled || !this.settings.autoSyncEnabled) return;
@@ -49,8 +43,6 @@ export class SyncScheduler {
         this.isEnabled = true;
         const intervalMs = this.settings.syncIntervalMinutes * 60 * 1000;
 
-        // registerInterval returns the raw numeric id; cast guards against envs
-        // where TS types setInterval as returning NodeJS.Timeout.
         this.intervalId = this.plugin.registerInterval(
             window.setInterval(() => {
                 void this.triggerSync();
@@ -58,7 +50,6 @@ export class SyncScheduler {
         ) as unknown as number;
     }
 
-    /** Stop the periodic timer. Safe to call when already stopped. */
     stop(): void {
         if (!this.isEnabled) return;
         if (this.intervalId !== null) {
@@ -68,10 +59,6 @@ export class SyncScheduler {
         this.isEnabled = false;
     }
 
-    /**
-     * Run a single sync, forwarding lifecycle events to the registered callbacks.
-     * Returns `null` if a sync is already in progress or the engine throws.
-     */
     async triggerSync(): Promise<SyncResult | null> {
         if (this.syncEngine.isInProgress()) {
             return null;

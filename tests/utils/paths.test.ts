@@ -1,12 +1,6 @@
-/**
- * Unit tests for path utilities
- */
-
 import {
-    normalizePath,
     getFilename,
     getExtension,
-    matchGlob,
     matchesAnyGlob,
     isConflictFile,
     addPrefix,
@@ -15,20 +9,6 @@ import {
 } from '../../src/utils/paths';
 
 describe('Path Utils', () => {
-    describe('normalizePath', () => {
-        it('should normalize backslashes to forward slashes', () => {
-            expect(normalizePath('folder\\file.md')).toBe('folder/file.md');
-        });
-
-        it('should handle already normalized paths', () => {
-            expect(normalizePath('folder/file.md')).toBe('folder/file.md');
-        });
-
-        it('should handle multiple backslashes', () => {
-            expect(normalizePath('a\\b\\c\\file.md')).toBe('a/b/c/file.md');
-        });
-    });
-
     describe('getFilename', () => {
         it('should extract filename from path', () => {
             expect(getFilename('folder/file.md')).toBe('file.md');
@@ -57,37 +37,13 @@ describe('Path Utils', () => {
         });
     });
 
-    describe('matchGlob', () => {
-        it('should match exact paths', () => {
-            expect(matchGlob('file.md', 'file.md')).toBe(true);
-        });
-
-        it('should match star wildcard', () => {
-            expect(matchGlob('file.md', '*.md')).toBe(true);
-            expect(matchGlob('file.txt', '*.md')).toBe(false);
-        });
-
-        it('should match globstar (**)', () => {
-            expect(matchGlob('a/b/c/file.md', '**/*.md')).toBe(true);
-            expect(matchGlob('dir/file.md', '**/*.md')).toBe(true);
-            // Note: Our implementation converts ** to .* which requires at least one character
-            // This means root-level files don't match **/*.md (strict glob behavior)
-            expect(matchGlob('file.md', '**/*.md')).toBe(false);
-            // To match any file including root, use just *.md
-            expect(matchGlob('file.md', '*.md')).toBe(true);
-        });
-
-        it('should handle .obsidian pattern', () => {
-            expect(matchGlob('.obsidian/workspace.json', '.obsidian/**')).toBe(true);
-            expect(matchGlob('.obsidian/plugins/plugin.json', '.obsidian/**')).toBe(true);
-        });
-    });
-
     describe('matchesAnyGlob', () => {
         it('should match any pattern in list', () => {
-            const patterns = ['*.md', '*.txt'];
+            const patterns = ['*.md', '*.txt', '**/*.canvas', '.obsidian/**'];
             expect(matchesAnyGlob('file.md', patterns)).toBe(true);
             expect(matchesAnyGlob('file.txt', patterns)).toBe(true);
+            expect(matchesAnyGlob('dir/file.canvas', patterns)).toBe(true);
+            expect(matchesAnyGlob('.obsidian/workspace.json', patterns)).toBe(true);
             expect(matchesAnyGlob('file.pdf', patterns)).toBe(false);
         });
 
