@@ -1,5 +1,5 @@
 import { Notice, Plugin } from 'obsidian';
-import { DEFAULT_SETTINGS, S3SyncSettings, SyncResult } from './types';
+import { cloneSettings, DEFAULT_SETTINGS, S3SyncSettings, SyncResult } from './types';
 import { S3SyncSettingTab } from './settings';
 import { StatusBar } from './statusbar';
 import { S3Provider } from './storage/S3Provider';
@@ -9,9 +9,14 @@ import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
 import { registerPluginCommands } from './commands';
 
+interface PersistedPluginData extends Partial<S3SyncSettings> {
+	journalId?: unknown;
+}
+
 export default class S3SyncPlugin extends Plugin {
 	settings!: S3SyncSettings;
 
+	private journalId = '';
 	private s3Provider: S3Provider | null = null;
 	private statusBar: StatusBar | null = null;
 	private syncJournal: SyncJournal | null = null;
@@ -29,7 +34,7 @@ export default class S3SyncPlugin extends Plugin {
 		});
 		this.statusBar.init();
 
-		this.syncJournal = new SyncJournal(this.app.vault.getName());
+		this.syncJournal = new SyncJournal(this.journalId);
 		await this.syncJournal.initialize();
 
 		this.pathCodec = new SyncPathCodec();
@@ -108,18 +113,41 @@ export default class S3SyncPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData() as Partial<S3SyncSettings> | null) ?? {},
-		);
+		const data = ((await this.loadData()) as PersistedPluginData | null) ?? {};
+		const { journalId, ...settingsData } = data;
+		const existingJournalId = typeof journalId === 'string' && journalId.length > 0
+			? journalId
+			: undefined;
+
+		this.settings = cloneSettings({
+			...DEFAULT_SETTINGS,
+			...settingsData,
+		});
+		this.journalId = existingJournalId ?? crypto.randomUUID();
+
+		if (!existingJournalId) {
+			await this.persistSettings();
+		}
 	}
 
 	async saveSettings(): Promise<void> {
-		await this.saveData(this.settings);
+		if (this.syncEngine?.isInProgress()) {
+			await this.loadSettings();
+			new Notice('Cannot change settings while a sync is in progress.');
+			return;
+		}
+
+		await this.persistSettings();
 		this.s3Provider?.updateSettings(this.settings);
 		this.syncEngine?.updateSettings(this.settings);
 		this.syncScheduler?.updateSettings(this.settings);
+	}
+
+	private async persistSettings(): Promise<void> {
+		await this.saveData({
+			...this.settings,
+			journalId: this.journalId,
+		});
 	}
 
 	onSettingsChanged(): void {

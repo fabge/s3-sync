@@ -619,6 +619,36 @@ describe('SyncExecutor', () => {
 			}));
 		});
 
+		it('does not record an upload when the local file changed after planning', async () => {
+			const { internals, app, addFile, s3Provider, journal } = createExecutorContext();
+			const file = addFile('notes/test.md', 'changed', { mtime: 999, size: 7 });
+			app.vault.getAbstractFileByPath.mockReturnValue(file);
+
+			await expect(internals.executeUpload(createPlanItem('upload', {
+				expectedLocalMtime: 444,
+				expectedLocalSize: 9,
+			}))).rejects.toThrow('Local file notes/test.md changed since planning. Skipping upload.');
+
+			expect(s3Provider.uploadFile).not.toHaveBeenCalled();
+			expect(journal.setStateRecord).not.toHaveBeenCalled();
+		});
+
+		it('does not record an upload if the local file mutates mid-upload', async () => {
+			const { internals, app, addFile, s3Provider, journal } = createExecutorContext();
+			const file = addFile('notes/test.md', 'upload me', { mtime: 444, size: 9 });
+			app.vault.getAbstractFileByPath.mockReturnValue(file);
+			mockedReadVaultFile.mockResolvedValue('upload me');
+			mockedFingerprint.mockResolvedValue('upload-fingerprint');
+			s3Provider.uploadFile.mockImplementation(async () => {
+				file.stat = { ...file.stat, mtime: 555, size: 10 };
+				return 'etag-uploaded';
+			});
+
+			await expect(internals.executeUpload(createPlanItem('upload'))).rejects.toThrow('Local file notes/test.md changed since planning. Skipping upload.');
+
+			expect(journal.setStateRecord).not.toHaveBeenCalled();
+		});
+
 		it('throws when the local file is not present in the vault', async () => {
 			const { internals, app } = createExecutorContext();
 			app.vault.getAbstractFileByPath.mockReturnValue(null);

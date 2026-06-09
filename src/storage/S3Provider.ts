@@ -11,7 +11,7 @@ import {
     HeadObjectCommand,
     ListObjectsV2CommandOutput,
 } from '@aws-sdk/client-s3';
-import { S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncSettings } from '../types';
+import { cloneSettings, S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncSettings } from '../types';
 import { normalizeEntityTag } from '../utils/etags';
 import { ObsidianHttpHandler } from './ObsidianHttpHandler';
 
@@ -40,12 +40,12 @@ export class S3Provider {
     private settings: S3SyncSettings;
 
     constructor(settings: S3SyncSettings, client?: S3Client) {
-        this.settings = settings;
+        this.settings = cloneSettings(settings);
         this.client = client ?? null;
     }
 
     updateSettings(settings: S3SyncSettings): void {
-        this.settings = settings;
+        this.settings = cloneSettings(settings);
         this.client = null;
     }
 
@@ -57,21 +57,22 @@ export class S3Provider {
     }
 
     async testConnection(): Promise<string> {
-        const errors = validateConnectionSettings(this.settings);
+        const settings = this.settings;
+        const errors = validateConnectionSettings(settings);
         if (errors.length > 0) {
             throw new Error(`Configuration errors: ${errors.join(', ')}`);
         }
 
         try {
             await this.getClient().send(new HeadBucketCommand({
-                Bucket: this.settings.bucket,
+                Bucket: settings.bucket,
             }));
-            return `Connected successfully to ${this.settings.bucket}`;
+            return `Connected successfully to ${settings.bucket}`;
         } catch (error) {
             const err = error as Error & { name?: string; $metadata?: { httpStatusCode?: number } };
 
             if (err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404) {
-                throw new Error(`Bucket "${this.settings.bucket}" not found`);
+                throw new Error(`Bucket "${settings.bucket}" not found`);
             }
             if (err.name === 'AccessDenied' || err.$metadata?.httpStatusCode === 403) {
                 throw new Error('Access denied. Check your credentials and bucket permissions.');
@@ -90,13 +91,14 @@ export class S3Provider {
     }
 
     async listObjects(): Promise<S3ObjectInfo[]> {
+        const settings = this.settings;
         const client = this.getClient();
         const objects: S3ObjectInfo[] = [];
         let continuationToken: string | undefined;
 
         do {
             const response: ListObjectsV2CommandOutput = await client.send(new ListObjectsV2Command({
-                Bucket: this.settings.bucket,
+                Bucket: settings.bucket,
                 ContinuationToken: continuationToken,
             }));
 
@@ -117,9 +119,10 @@ export class S3Provider {
 
     /** Get content and metadata together to avoid a separate head+get race. */
     async downloadFileWithMetadata(key: string): Promise<S3DownloadResult | null> {
+        const settings = this.settings;
         try {
             const response = await this.getClient().send(new GetObjectCommand({
-                Bucket: this.settings.bucket,
+                Bucket: settings.bucket,
                 Key: key,
             }));
 
@@ -197,9 +200,10 @@ export class S3Provider {
     }
 
     async headObject(key: string): Promise<S3HeadResult | null> {
+        const settings = this.settings;
         try {
             const response = await this.getClient().send(new HeadObjectCommand({
-                Bucket: this.settings.bucket,
+                Bucket: settings.bucket,
                 Key: key,
             }));
             return this.toS3HeadResult(response);
@@ -230,9 +234,10 @@ export class S3Provider {
 		options?: { contentType?: string; ifMatch?: string; ifNoneMatch?: string; metadata?: Record<string, string> }
 	): Promise<string> {
         const body = typeof content === 'string' ? new TextEncoder().encode(content) : content;
+        const settings = this.settings;
 
         const response = await this.getClient().send(new PutObjectCommand({
-            Bucket: this.settings.bucket,
+            Bucket: settings.bucket,
             Key: key,
             Body: body,
             ContentType: options?.contentType,
@@ -255,8 +260,9 @@ export class S3Provider {
 	}
 
     async deleteFile(key: string, ifMatch?: string): Promise<void> {
+        const settings = this.settings;
         await this.getClient().send(new DeleteObjectCommand({
-            Bucket: this.settings.bucket,
+            Bucket: settings.bucket,
             Key: key,
             IfMatch: this.toConditionalEntityTag(ifMatch),
         }));

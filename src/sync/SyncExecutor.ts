@@ -148,6 +148,9 @@ export class SyncExecutor {
 			throw new Error(`File not found for upload: ${item.path}`);
 		}
 
+		this.assertLocalUnchanged(item, 'upload');
+		const localMtime = file.stat.mtime;
+		const localSize = file.stat.size;
 		const content = await readVaultFile(this.app.vault, file);
 		const contentFingerprint = await fingerprint(content);
 		const payload = typeof content === 'string' ? new TextEncoder().encode(content) : content;
@@ -161,12 +164,17 @@ export class SyncExecutor {
 				'obsidian-fingerprint': contentFingerprint,
 			},
 		});
+		this.assertLocalUnchanged({
+			...item,
+			expectedLocalMtime: localMtime,
+			expectedLocalSize: localSize,
+		}, 'upload');
 
 		const record: SyncStateRecord = {
 			path: item.path,
 			contentFingerprint,
-			localMtime: file.stat.mtime,
-			localSize: file.stat.size,
+			localMtime,
+			localSize,
 			remoteEtag: etag,
 		};
 

@@ -1,8 +1,8 @@
 /**
  * IndexedDB persistence for per-file sync baselines, conflict records, and
  * plugin metadata. The baseline is what lets three-way reconciliation tell
- * "changed locally since last sync" from "never synced". The DB name is
- * vault-scoped so separate vaults in one bucket don't share state.
+ * "changed locally since last sync" from "never synced". The DB name uses a
+ * vault-local id so vaults with the same display name don't share state.
  */
 
 import { DBSchema, IDBPDatabase, openDB } from 'idb';
@@ -27,10 +27,10 @@ interface SyncJournalDB extends DBSchema {
 export class SyncJournal {
 	private db: IDBPDatabase<SyncJournalDB> | null = null;
 
-	constructor(private vaultName: string) {}
+	constructor(private journalId: string) {}
 
 	async initialize(): Promise<void> {
-		this.db = await openDB<SyncJournalDB>(`${DB_NAME_PREFIX}-${this.vaultName}`, DB_VERSION, {
+		this.db = await openDB<SyncJournalDB>(`${DB_NAME_PREFIX}-${this.journalId}`, DB_VERSION, {
 			upgrade(db) {
 				db.createObjectStore('stateRecords', { keyPath: 'path' });
 				db.createObjectStore('conflicts', { keyPath: 'path' });

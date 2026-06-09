@@ -364,22 +364,20 @@ describe('SyncEngine', () => {
 			consoleErrorSpy.mockRestore();
 		});
 
-		it('blocks sync when settings change during planning', async () => {
+		it('rejects settings updates while sync is in progress', async () => {
 			const context = createEngineContext();
 			const planDeferred = createDeferred<SyncPlanItem[]>();
 			context.planner.buildPlan.mockReturnValueOnce(planDeferred.promise);
-			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
 			const syncPromise = context.engine.sync();
-			context.engine.updateSettings(createSettings({ bucket: 'changed-bucket' }));
+			expect(() => context.engine.updateSettings(createSettings({ bucket: 'changed-bucket' })))
+				.toThrow('Cannot update sync settings while a sync is in progress.');
 			planDeferred.resolve([]);
 
 			const result = await syncPromise;
 
-			expect(result.success).toBe(false);
-			expect(result.errors[0]?.message).toContain('destination changed during sync');
-			expect(context.executor.execute).not.toHaveBeenCalled();
-			consoleErrorSpy.mockRestore();
+			expect(result.success).toBe(true);
+			expect(context.executor.execute).toHaveBeenCalledTimes(1);
 		});
 
 		it('blocks delete-local plans when there is no prior successful sync', async () => {

@@ -246,7 +246,7 @@ describe('SyncPlanner', () => {
 		});
 
 		it('plans an upload for a local-only file with no baseline', async () => {
-			addVaultFile('local-only.md');
+			addVaultFile('local-only.md', 'content', 123, 7);
 			mockedDecide.mockImplementation((input) => {
 				expect(input.local).toBe('L+');
 				expect(input.remote).toBe('R0');
@@ -260,6 +260,8 @@ describe('SyncPlanner', () => {
 					path: 'local-only.md',
 					action: 'upload',
 					expectRemoteAbsent: true,
+					expectedLocalMtime: 123,
+					expectedLocalSize: 7,
 				}),
 			]);
 		});
@@ -395,6 +397,8 @@ describe('SyncPlanner', () => {
 				expect.objectContaining({
 					path: 'missing-remote.md',
 					expectRemoteAbsent: true,
+					expectedLocalMtime: 100,
+					expectedLocalSize: 7,
 				}),
 			]);
 		});

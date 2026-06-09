@@ -256,7 +256,10 @@ export class SyncPlanner {
 	}
 
 	private needsLocalPrecondition(item: SyncPlanItem): boolean {
-		return item.action === 'download' || item.action === 'delete-local' || item.action === 'conflict';
+		return item.action === 'upload'
+			|| item.action === 'download'
+			|| item.action === 'delete-local'
+			|| item.action === 'conflict';
 	}
 
 	private shouldExclude(path: string): boolean {

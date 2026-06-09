@@ -176,15 +176,15 @@ describe('SyncJournal', () => {
 	});
 
 	describe('initialize', () => {
-		it('opens the journal database using the vault-specific name', async () => {
+		it('opens the journal database using the vault-local journal id', async () => {
 			const { db } = createMockDatabase();
 			jest.mocked(openDB).mockResolvedValue(db as never);
 
-			const journal = new SyncJournal('MyVault');
+			const journal = new SyncJournal('journal-123');
 			await journal.initialize();
 
 			expect(openDB).toHaveBeenCalledWith(
-				'obsidian-s3-sync-journal-MyVault',
+				'obsidian-s3-sync-journal-journal-123',
 				1,
 				expect.objectContaining({
 					upgrade: expect.any(Function),

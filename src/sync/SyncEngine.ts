@@ -1,7 +1,7 @@
 /** Thin sync-cycle orchestrator; planner/executor do the heavy lifting. */
 
 import { App } from 'obsidian';
-import { S3SyncSettings, SyncPlanItem, SyncResult } from '../types';
+import { cloneSettings, S3SyncSettings, SyncPlanItem, SyncResult } from '../types';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
 import { SyncPathCodec } from './SyncPathCodec';
@@ -23,6 +23,7 @@ async function withJournalContext<T>(phase: string, operation: () => Promise<T>)
 
 export class SyncEngine {
 	private isSyncing = false;
+	private settings: S3SyncSettings;
 
 	private static readonly PROTECT_ACTIONS = new Set<SyncPlanItem['action']>([
 		'upload',
@@ -37,11 +38,16 @@ export class SyncEngine {
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
 		private pathCodec: SyncPathCodec,
-		private settings: S3SyncSettings,
-	) {}
+		settings: S3SyncSettings,
+	) {
+		this.settings = cloneSettings(settings);
+	}
 
 	updateSettings(settings: S3SyncSettings): void {
-		this.settings = settings;
+		if (this.isSyncing) {
+			throw new Error('Cannot update sync settings while a sync is in progress.');
+		}
+		this.settings = cloneSettings(settings);
 	}
 
 	isInProgress(): boolean {

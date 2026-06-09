@@ -2,11 +2,12 @@
 
 import { Plugin } from 'obsidian';
 import { SyncEngine } from './SyncEngine';
-import { S3SyncSettings, SyncResult } from '../types';
+import { cloneSettings, S3SyncSettings, SyncResult } from '../types';
 
 export class SyncScheduler {
     private intervalId: number | null = null;
     private isEnabled = false;
+    private settings: S3SyncSettings;
 
     private onSyncStart?: () => void;
     private onSyncComplete?: (result: SyncResult) => void;
@@ -15,8 +16,10 @@ export class SyncScheduler {
     constructor(
         private plugin: Plugin,
         private syncEngine: SyncEngine,
-        private settings: S3SyncSettings,
-    ) {}
+        settings: S3SyncSettings,
+    ) {
+        this.settings = cloneSettings(settings);
+    }
 
     setCallbacks(callbacks: {
         onSyncStart?: () => void;
@@ -29,7 +32,7 @@ export class SyncScheduler {
     }
 
     updateSettings(settings: S3SyncSettings): void {
-        this.settings = settings;
+        this.settings = cloneSettings(settings);
         if (this.isEnabled && this.settings.autoSyncEnabled) {
             this.stop();
             this.start();

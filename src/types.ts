@@ -28,6 +28,13 @@ export const DEFAULT_SETTINGS: S3SyncSettings = {
 	protectModifyPercentage: 50,
 };
 
+export function cloneSettings(settings: S3SyncSettings): S3SyncSettings {
+	return {
+		...settings,
+		excludePatterns: [...settings.excludePatterns],
+	};
+}
+
 export type VaultFileKind = 'text' | 'binary';
 
 export type SyncAction =
