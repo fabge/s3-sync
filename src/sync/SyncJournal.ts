@@ -65,11 +65,6 @@ export class SyncJournal {
 		return await this.db!.getAll('stateRecords');
 	}
 
-	async getConflict(path: string): Promise<ConflictRecord | undefined> {
-		this.ensureInitialized();
-		return await this.db!.get('conflicts', path);
-	}
-
 	async setConflict(record: ConflictRecord): Promise<void> {
 		this.ensureInitialized();
 		await this.db!.put('conflicts', record);

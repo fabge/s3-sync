@@ -52,10 +52,16 @@ export class SyncPlanner {
 		private settings: S3SyncSettings,
 	) {}
 
-	async countInScopeLocalFiles(): Promise<number> {
+	/**
+	 * Size of the established sync set: in-scope files with a journal baseline.
+	 * Used as the denominator for the change-protection threshold so churn is
+	 * measured against what's already synced — a first sync (no baselines) skips
+	 * the check, and bulk downloads into a fresh vault aren't falsely blocked.
+	 */
+	async countSyncedFiles(): Promise<number> {
 		let count = 0;
-		for (const file of this.app.vault.getFiles()) {
-			if (!this.shouldExclude(file.path)) {
+		for (const baseline of await this.journal.getAllStateRecords()) {
+			if (!this.shouldExclude(baseline.path)) {
 				count++;
 			}
 		}
@@ -134,7 +140,7 @@ export class SyncPlanner {
 			ctx.local = { file, mtime: file.stat.mtime, size: file.stat.size };
 		}
 
-		const remoteObjects = await this.s3Provider.listObjects(this.pathCodec.getListPrefix());
+		const remoteObjects = await this.s3Provider.listObjects();
 		for (const obj of remoteObjects) {
 			if (this.pathCodec.isMetadataKey(obj.key)) continue;
 

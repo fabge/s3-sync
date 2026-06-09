@@ -15,8 +15,4 @@ export class SyncPathCodec {
 	isMetadataKey(remoteKey: string): boolean {
 		return this.remoteToLocal(remoteKey).startsWith(`${METADATA_DIR}/`);
 	}
-
-	getListPrefix(): string {
-		return '';
-	}
 }

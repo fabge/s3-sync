@@ -227,7 +227,6 @@ describe('SyncJournal', () => {
 			await expect(journal.setStateRecord(stateRecord)).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.deleteStateRecord('notes/example.md')).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.getAllStateRecords()).rejects.toThrow(/SyncJournal not initialized/);
-			await expect(journal.getConflict('notes/conflict.md')).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.setConflict(conflictRecord)).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.deleteConflict('notes/conflict.md')).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.getAllConflicts()).rejects.toThrow(/SyncJournal not initialized/);
@@ -287,8 +286,6 @@ describe('SyncJournal', () => {
 
 			expect(db.put).toHaveBeenNthCalledWith(1, 'conflicts', firstConflict);
 			expect(db.put).toHaveBeenNthCalledWith(2, 'conflicts', secondConflict);
-			expect(await journal.getConflict(firstConflict.path)).toEqual(firstConflict);
-			expect(db.get).toHaveBeenCalledWith('conflicts', firstConflict.path);
 			expect(await journal.getAllConflicts()).toEqual([firstConflict, secondConflict]);
 			expect(db.getAll).toHaveBeenCalledWith('conflicts');
 

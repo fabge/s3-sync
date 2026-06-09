@@ -39,12 +39,4 @@ describe('SyncPathCodec', () => {
 		});
 	});
 
-	describe('getListPrefix', () => {
-		it('lists from the bucket root', () => {
-			const codec = new SyncPathCodec();
-
-			expect(codec.getListPrefix()).toBe('');
-		});
-	});
-
 });

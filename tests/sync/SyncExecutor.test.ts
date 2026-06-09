@@ -525,7 +525,7 @@ describe('SyncExecutor', () => {
 			}
 		});
 
-		it('dispatches conflict items and appends the path to result.conflicts', async () => {
+		it('dispatches conflict items without touching counters (conflicts come from the journal)', async () => {
 			const { internals } = createExecutorContext();
 			const result = createResult();
 			const item = createPlanItem('conflict', { path: 'conflict.md', conflictMode: 'both' });
@@ -534,7 +534,7 @@ describe('SyncExecutor', () => {
 			await internals.executeItem(item, result);
 
 			expect(conflictSpy).toHaveBeenCalledWith(item);
-			expect(result.conflicts).toEqual(['conflict.md']);
+			expect(result.conflicts).toEqual([]);
 		});
 	});
 

@@ -108,7 +108,6 @@ export class SyncExecutor {
 				break;
 			case 'conflict':
 				await this.executeConflict(item);
-				result.conflicts.push(item.path);
 				break;
 			case 'forget':
 				await this.executeForget(item);

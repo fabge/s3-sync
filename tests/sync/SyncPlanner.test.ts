@@ -36,7 +36,6 @@ jest.mock('../../src/sync/SyncJournal', () => ({
 
 jest.mock('../../src/sync/SyncPathCodec', () => ({
 	SyncPathCodec: jest.fn().mockImplementation(() => ({
-		getListPrefix: jest.fn(),
 		isMetadataKey: jest.fn(),
 		remoteToLocal: jest.fn(),
 		localToRemote: jest.fn(),
@@ -86,7 +85,7 @@ interface SyncPlannerPrivate {
 }
 
 interface MockS3Provider {
-	listObjects: jest.Mock<Promise<S3ObjectInfo[]>, [string]>;
+	listObjects: jest.Mock<Promise<S3ObjectInfo[]>, []>;
 	headObject: jest.Mock<Promise<S3HeadResult | null>, [string]>;
 	downloadFileWithMetadata: jest.Mock<Promise<S3DownloadResult | null>, [string]>;
 }
@@ -97,7 +96,6 @@ interface MockSyncJournal {
 }
 
 interface MockSyncPathCodec {
-	getListPrefix: jest.Mock<string, []>;
 	isMetadataKey: jest.Mock<boolean, [string]>;
 	remoteToLocal: jest.Mock<string, [string]>;
 	localToRemote: jest.Mock<string, [string]>;
@@ -224,7 +222,6 @@ describe('SyncPlanner', () => {
 		};
 
 		pathCodec = {
-			getListPrefix: jest.fn(),
 			isMetadataKey: jest.fn(),
 			remoteToLocal: jest.fn(),
 			localToRemote: jest.fn(),
@@ -235,7 +232,6 @@ describe('SyncPlanner', () => {
 		s3Provider.downloadFileWithMetadata.mockResolvedValue(null);
 		journal.getAllStateRecords.mockResolvedValue([]);
 		journal.getAllConflicts.mockResolvedValue([]);
-		pathCodec.getListPrefix.mockReturnValue('vault/');
 		pathCodec.isMetadataKey.mockReturnValue(false);
 		pathCodec.remoteToLocal.mockImplementation((key) => key.replace(/^vault\//u, ''));
 		pathCodec.localToRemote.mockImplementation((path) => `vault/${path}`);
@@ -255,8 +251,7 @@ describe('SyncPlanner', () => {
 			const plan = await planner.buildPlan();
 
 			expect(plan).toEqual([]);
-			expect(pathCodec.getListPrefix).toHaveBeenCalledWith();
-			expect(s3Provider.listObjects).toHaveBeenCalledWith('vault/');
+			expect(s3Provider.listObjects).toHaveBeenCalledWith();
 			expect(mockedDecide).not.toHaveBeenCalled();
 		});
 

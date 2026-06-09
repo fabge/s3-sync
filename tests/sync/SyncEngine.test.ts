@@ -30,7 +30,7 @@ import { SyncPlanner } from '../../src/sync/SyncPlanner';
 import { DEFAULT_SETTINGS, S3SyncSettings, SyncPlanItem, SyncResult } from '../../src/types';
 
 interface MockPlanner {
-	countInScopeLocalFiles: jest.Mock<Promise<number>, []>;
+	countSyncedFiles: jest.Mock<Promise<number>, []>;
 	buildPlan: jest.Mock<Promise<SyncPlanItem[]>, []>;
 }
 
@@ -135,7 +135,7 @@ function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineCon
 		kind: 'path-codec',
 	};
 	const planner: MockPlanner = {
-		countInScopeLocalFiles: jest.fn().mockResolvedValue(10),
+		countSyncedFiles: jest.fn().mockResolvedValue(10),
 		buildPlan: jest.fn().mockResolvedValue([]),
 	};
 	const executor: MockExecutor = {

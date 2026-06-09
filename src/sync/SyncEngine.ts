@@ -54,6 +54,7 @@ export class SyncEngine {
 		}
 
 		this.isSyncing = true;
+		const startedAt = Date.now();
 
 		try {
 			const startFingerprint = computeDestinationFingerprint(this.settings);
@@ -73,7 +74,7 @@ export class SyncEngine {
 				this.pathCodec,
 				this.settings,
 			);
-			const inScopeFileCount = await planner.countInScopeLocalFiles();
+			const syncedFileCount = await planner.countSyncedFiles();
 			const plan = await planner.buildPlan();
 			if (computeDestinationFingerprint(this.settings) !== startFingerprint) {
 				return this.buildBlockedResult(
@@ -90,7 +91,7 @@ export class SyncEngine {
 			if (destructivePlanError) {
 				return this.buildBlockedResult(destructivePlanError, 'delete-local');
 			}
-			this.assertProtectModifyThreshold(plan, inScopeFileCount);
+			this.assertProtectModifyThreshold(plan, syncedFileCount);
 
 			const executor = new SyncExecutor(
 				this.app,
@@ -111,7 +112,7 @@ export class SyncEngine {
 
 			return {
 				success: false,
-				startedAt: Date.now(),
+				startedAt,
 				completedAt: Date.now(),
 				filesUploaded: 0,
 				filesDownloaded: 0,
@@ -136,21 +137,21 @@ export class SyncEngine {
 
 	private assertProtectModifyThreshold(
 		plan: SyncPlanItem[],
-		inScopeFileCount: number,
+		syncedFileCount: number,
 	): void {
 		const threshold = this.settings.protectModifyPercentage;
-		if (threshold >= 100 || inScopeFileCount <= 0) {
+		if (threshold >= 100 || syncedFileCount <= 0) {
 			return;
 		}
 
 		const riskyActionCount = plan.filter((item) =>
 			SyncEngine.PROTECT_ACTIONS.has(item.action),
 		).length;
-		const riskyPercentage = (riskyActionCount / inScopeFileCount) * 100;
+		const riskyPercentage = (riskyActionCount / syncedFileCount) * 100;
 
 		if (riskyPercentage > threshold) {
 			throw new Error(
-				`Aborting sync: ${riskyActionCount} of ${inScopeFileCount} in-scope files would change (${riskyPercentage.toFixed(1)}%), exceeding the ${threshold}% protection threshold.`,
+				`Aborting sync: ${riskyActionCount} of ${syncedFileCount} synced files would change (${riskyPercentage.toFixed(1)}%), exceeding the ${threshold}% protection threshold.`,
 			);
 		}
 	}

@@ -89,7 +89,7 @@ export class S3Provider {
         }
     }
 
-    async listObjects(prefix: string, recursive = true): Promise<S3ObjectInfo[]> {
+    async listObjects(): Promise<S3ObjectInfo[]> {
         const client = this.getClient();
         const objects: S3ObjectInfo[] = [];
         let continuationToken: string | undefined;
@@ -97,8 +97,6 @@ export class S3Provider {
         do {
             const response: ListObjectsV2CommandOutput = await client.send(new ListObjectsV2Command({
                 Bucket: this.settings.bucket,
-                Prefix: prefix,
-                Delimiter: recursive ? undefined : '/',
                 ContinuationToken: continuationToken,
             }));
 

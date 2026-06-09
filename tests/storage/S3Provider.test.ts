@@ -77,7 +77,7 @@ describe('S3Provider', () => {
 		});
 		(provider as unknown as { client: { send: typeof send } }).client = { send };
 
-		const objects = await provider.listObjects('');
+		const objects = await provider.listObjects();
 
 		const command = send.mock.calls[0][0] as ListObjectsV2Command;
 		expect(command).toBeInstanceOf(ListObjectsV2Command);
