@@ -48,14 +48,10 @@ interface MockDatabaseContext {
 function createStateRecord(overrides: Partial<SyncStateRecord> = {}): SyncStateRecord {
 	return {
 		path: 'notes/example.md',
-		remoteKey: 'vault/notes/example.md',
 		contentFingerprint: 'sha256:abc123',
 		localMtime: 100,
 		localSize: 200,
-		remoteObjectSize: 400,
 		remoteEtag: 'etag-1',
-		remoteLastModified: 500,
-		lastSyncedAt: 600,
 		...overrides,
 	};
 }
@@ -66,8 +62,6 @@ function createConflictRecord(overrides: Partial<ConflictRecord> = {}): Conflict
 		mode: 'both',
 		localArtifactPath: 'notes/LOCAL_conflict.md',
 		remoteArtifactPath: 'notes/REMOTE_conflict.md',
-		baselineFingerprint: 'sha256:baseline',
-		detectedAt: 700,
 		...overrides,
 	};
 }
@@ -248,7 +242,6 @@ describe('SyncJournal', () => {
 			const firstRecord = createStateRecord();
 			const secondRecord = createStateRecord({
 				path: 'notes/second.md',
-				remoteKey: 'vault/notes/second.md',
 				contentFingerprint: 'sha256:def456',
 			});
 

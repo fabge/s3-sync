@@ -181,8 +181,6 @@ function createResult(): SyncResult {
 		filesUploaded: 0,
 		filesDownloaded: 0,
 		filesDeleted: 0,
-		filesAdopted: 0,
-		filesForgotten: 0,
 		conflicts: [],
 		errors: [],
 	};
@@ -192,7 +190,6 @@ function createConflictRecord(path: string): ConflictRecord {
 	return {
 		path,
 		mode: 'both',
-		detectedAt: 123,
 	};
 }
 
@@ -200,8 +197,6 @@ function createDownloadResult(overrides: Partial<S3DownloadResult> = {}): S3Down
 	return {
 		content: new Uint8Array([1, 2, 3]),
 		etag: 'remote-etag',
-		size: 3,
-		lastModified: 456,
 		...overrides,
 	};
 }
@@ -209,8 +204,6 @@ function createDownloadResult(overrides: Partial<S3DownloadResult> = {}): S3Down
 function createHeadResult(overrides: Partial<S3HeadResult> = {}): S3HeadResult {
 	return {
 		etag: 'remote-etag',
-		size: 11,
-		lastModified: 999,
 		fingerprint: 'remote-fingerprint',
 		...overrides,
 	};
@@ -335,8 +328,6 @@ describe('SyncExecutor', () => {
 			expect(result.filesUploaded).toBe(0);
 			expect(result.filesDownloaded).toBe(0);
 			expect(result.filesDeleted).toBe(0);
-			expect(result.filesAdopted).toBe(0);
-			expect(result.filesForgotten).toBe(0);
 			expect(result.errors).toEqual([]);
 			expect(result.conflicts).toEqual([]);
 			expect(result.startedAt).toBeGreaterThan(0);
@@ -344,7 +335,7 @@ describe('SyncExecutor', () => {
 			expect(journal.getAllConflicts).toHaveBeenCalledTimes(1);
 		});
 
-		it('dispatches multiple items and increments result counters correctly', async () => {
+		it('dispatches multiple items and increments file counters correctly', async () => {
 			const { executor, internals, journal } = createExecutorContext();
 			jest.spyOn(internals, 'executeAdopt').mockResolvedValue(undefined);
 			jest.spyOn(internals, 'executeUpload').mockResolvedValue(undefined);
@@ -367,11 +358,9 @@ describe('SyncExecutor', () => {
 			]);
 
 			expect(result.success).toBe(true);
-			expect(result.filesAdopted).toBe(1);
 			expect(result.filesUploaded).toBe(1);
 			expect(result.filesDownloaded).toBe(1);
 			expect(result.filesDeleted).toBe(2);
-			expect(result.filesForgotten).toBe(1);
 			expect(result.conflicts).toEqual(['from-journal.md']);
 			expect(result.errors).toEqual([]);
 		});
@@ -491,14 +480,14 @@ describe('SyncExecutor', () => {
 		const actionCases: Array<{
 			action: SyncAction;
 			method: keyof ExecutorInternals | null;
-			counter?: keyof Pick<SyncResult, 'filesAdopted' | 'filesUploaded' | 'filesDownloaded' | 'filesDeleted' | 'filesForgotten'>;
+			counter?: keyof Pick<SyncResult, 'filesUploaded' | 'filesDownloaded' | 'filesDeleted'>;
 		}> = [
-			{ action: 'adopt', method: 'executeAdopt', counter: 'filesAdopted' },
+			{ action: 'adopt', method: 'executeAdopt' },
 			{ action: 'upload', method: 'executeUpload', counter: 'filesUploaded' },
 			{ action: 'download', method: 'executeDownload', counter: 'filesDownloaded' },
 			{ action: 'delete-local', method: 'executeDeleteLocal', counter: 'filesDeleted' },
 			{ action: 'delete-remote', method: 'executeDeleteRemote', counter: 'filesDeleted' },
-			{ action: 'forget', method: 'executeForget', counter: 'filesForgotten' },
+			{ action: 'forget', method: 'executeForget' },
 			{ action: 'skip', method: null },
 		];
 
@@ -517,11 +506,9 @@ describe('SyncExecutor', () => {
 				}
 			} else {
 				await internals.executeItem(item, result);
-				expect(result.filesAdopted).toBe(0);
 				expect(result.filesUploaded).toBe(0);
 				expect(result.filesDownloaded).toBe(0);
 				expect(result.filesDeleted).toBe(0);
-				expect(result.filesForgotten).toBe(0);
 			}
 		});
 
@@ -554,14 +541,10 @@ describe('SyncExecutor', () => {
 			expect(mockedFingerprint).toHaveBeenCalledWith('local body');
 			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',
-				remoteKey: 'remote/notes/test.md',
 				contentFingerprint: 'local-fingerprint',
 				localMtime: 321,
 				localSize: 10,
-				remoteObjectSize: 11,
 				remoteEtag: 'remote-etag',
-				remoteLastModified: 999,
-				lastSyncedAt: expect.any(Number),
 			}));
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
 		});
@@ -613,13 +596,10 @@ describe('SyncExecutor', () => {
 			});
 			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',
-				remoteKey: 'remote/notes/test.md',
 				contentFingerprint: 'upload-fingerprint',
 				localMtime: 444,
 				localSize: 9,
-				remoteObjectSize: 9,
 				remoteEtag: 'etag-uploaded',
-				remoteLastModified: null,
 			}));
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
 		});
@@ -665,13 +645,10 @@ describe('SyncExecutor', () => {
 			expect(mockedFingerprint).toHaveBeenCalledWith('hello world');
 			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',
-				remoteKey: 'remote/notes/test.md',
 				contentFingerprint: 'fingerprint-1',
 				localMtime: 654,
 				localSize: 11,
-				remoteObjectSize: 3,
 				remoteEtag: 'remote-etag',
-				remoteLastModified: 456,
 			}));
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
 		});
@@ -806,16 +783,6 @@ describe('SyncExecutor', () => {
 			const file = addFile('notes/test.md', 'local body');
 			const writeSpy = jest.spyOn(internals, 'writeLocalFile').mockResolvedValue(undefined);
 			app.vault.getAbstractFileByPath.mockReturnValue(file);
-			journal.getStateRecord.mockResolvedValue({
-				path: 'notes/test.md',
-				remoteKey: 'remote/notes/test.md',
-				contentFingerprint: 'baseline-fingerprint',
-				localMtime: 1,
-				localSize: 1,
-				remoteObjectSize: 1,
-				remoteLastModified: 1,
-				lastSyncedAt: 1,
-			});
 			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: new TextEncoder().encode('remote body') }));
 
 			await internals.executeConflict(createPlanItem('conflict', {
@@ -831,8 +798,6 @@ describe('SyncExecutor', () => {
 				mode: 'both',
 				localArtifactPath: 'notes/LOCAL_test.md',
 				remoteArtifactPath: 'notes/REMOTE_test.md',
-				baselineFingerprint: 'baseline-fingerprint',
-				detectedAt: expect.any(Number),
 			}));
 		});
 

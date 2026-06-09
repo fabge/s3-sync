@@ -39,8 +39,6 @@ export class SyncExecutor {
 			filesUploaded: 0,
 			filesDownloaded: 0,
 			filesDeleted: 0,
-			filesAdopted: 0,
-			filesForgotten: 0,
 			conflicts: [],
 			errors: [],
 		};
@@ -88,7 +86,6 @@ export class SyncExecutor {
 		switch (item.action) {
 			case 'adopt':
 				await this.executeAdopt(item);
-				result.filesAdopted++;
 				break;
 			case 'upload':
 				await this.executeUpload(item);
@@ -111,7 +108,6 @@ export class SyncExecutor {
 				break;
 			case 'forget':
 				await this.executeForget(item);
-				result.filesForgotten++;
 				break;
 			case 'skip':
 				break;
@@ -135,14 +131,10 @@ export class SyncExecutor {
 
 		const record: SyncStateRecord = {
 			path: item.path,
-			remoteKey,
 			contentFingerprint,
 			localMtime: localFile.stat.mtime,
 			localSize: localFile.stat.size,
-			remoteObjectSize: head.size,
 			remoteEtag: head.etag,
-			remoteLastModified: head.lastModified,
-			lastSyncedAt: Date.now(),
 		};
 
 		await this.journal.setStateRecord(record);
@@ -172,14 +164,10 @@ export class SyncExecutor {
 
 		const record: SyncStateRecord = {
 			path: item.path,
-			remoteKey,
 			contentFingerprint,
 			localMtime: file.stat.mtime,
 			localSize: file.stat.size,
-			remoteObjectSize: payload.length,
 			remoteEtag: etag,
-			remoteLastModified: null,
-			lastSyncedAt: Date.now(),
 		};
 
 		await this.journal.setStateRecord(record);
@@ -208,14 +196,10 @@ export class SyncExecutor {
 
 		const record: SyncStateRecord = {
 			path: item.path,
-			remoteKey,
 			contentFingerprint: await fingerprint(content),
 			localMtime: localFile.stat.mtime,
 			localSize: localFile.stat.size,
-			remoteObjectSize: downloaded.size,
 			remoteEtag: downloaded.etag,
-			remoteLastModified: downloaded.lastModified,
-			lastSyncedAt: Date.now(),
 		};
 
 		await this.journal.setStateRecord(record);
@@ -242,7 +226,7 @@ export class SyncExecutor {
 		await this.journal.deleteConflict(item.path);
 	}
 
-	/** Create conflict artifacts; keep baseline fingerprint so later runs detect resolution. */
+	/** Create conflict artifacts; the conflict record blocks sync until the user removes them. */
 	private async executeConflict(item: SyncPlanItem): Promise<void> {
 		const mode: ConflictMode = item.conflictMode ?? 'both';
 		const fileName = item.path.substring(item.path.lastIndexOf('/') + 1);
@@ -271,15 +255,11 @@ export class SyncExecutor {
 			}
 		}
 
-		const baseline = await this.journal.getStateRecord(item.path);
-
 		await this.journal.setConflict({
 			path: item.path,
 			mode,
 			localArtifactPath: (mode === 'both' || mode === 'local-only') ? localArtifactPath : undefined,
 			remoteArtifactPath: (mode === 'both' || mode === 'remote-only') ? remoteArtifactPath : undefined,
-			baselineFingerprint: baseline?.contentFingerprint,
-			detectedAt: Date.now(),
 		});
 	}
 

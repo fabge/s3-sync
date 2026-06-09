@@ -44,14 +44,10 @@ export type ConflictMode = 'both' | 'local-only' | 'remote-only';
 
 export interface SyncStateRecord {
 	path: string;
-	remoteKey: string;
 	contentFingerprint: string;
 	localMtime: number;
 	localSize: number;
-	remoteObjectSize: number;
 	remoteEtag?: string;
-	remoteLastModified: number | null;
-	lastSyncedAt: number;
 }
 
 export interface ConflictRecord {
@@ -59,8 +55,6 @@ export interface ConflictRecord {
 	mode: ConflictMode;
 	localArtifactPath?: string;
 	remoteArtifactPath?: string;
-	baselineFingerprint?: string;
-	detectedAt: number;
 }
 
 export interface SyncPlanItem {
@@ -82,8 +76,6 @@ export interface SyncResult {
 	filesUploaded: number;
 	filesDownloaded: number;
 	filesDeleted: number;
-	filesAdopted: number;
-	filesForgotten: number;
 	conflicts: string[];
 	errors: SyncError[];
 }
@@ -113,16 +105,12 @@ export interface DecisionInput {
 
 export interface S3HeadResult {
 	etag: string;
-	size: number;
-	lastModified: number;
 	fingerprint?: string;
 }
 
 export interface S3DownloadResult {
 	content: Uint8Array;
 	etag: string;
-	size: number;
-	lastModified: number;
 	fingerprint?: string;
 }
 
@@ -144,7 +132,5 @@ export interface SyncState {
 
 export interface S3ObjectInfo {
 	key: string;
-	size: number;
-	lastModified: Date;
 	etag?: string;
 }

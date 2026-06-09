@@ -115,14 +115,10 @@ function createSettings(overrides: Partial<S3SyncSettings> = {}): S3SyncSettings
 function createStateRecord(overrides: Partial<SyncStateRecord> = {}): SyncStateRecord {
 	return {
 		path: 'note.md',
-		remoteKey: 'vault/note.md',
 		contentFingerprint: 'sha256:baseline',
 		localMtime: 100,
 		localSize: 10,
-		remoteObjectSize: 10,
 		remoteEtag: 'etag-baseline',
-		remoteLastModified: 100,
-		lastSyncedAt: 100,
 		...overrides,
 	};
 }
@@ -133,8 +129,6 @@ function createConflictRecord(overrides: Partial<ConflictRecord> = {}): Conflict
 		mode: 'both',
 		localArtifactPath: 'LOCAL_note.md',
 		remoteArtifactPath: 'REMOTE_note.md',
-		baselineFingerprint: 'sha256:baseline',
-		detectedAt: 100,
 		...overrides,
 	};
 }
@@ -142,8 +136,6 @@ function createConflictRecord(overrides: Partial<ConflictRecord> = {}): Conflict
 function createRemoteObject(overrides: Partial<S3ObjectInfo> = {}): S3ObjectInfo {
 	return {
 		key: 'vault/note.md',
-		size: 10,
-		lastModified: new Date('2026-01-01T00:00:00.000Z'),
 		etag: 'etag-remote',
 		...overrides,
 	};
@@ -153,8 +145,6 @@ function createDownloadResult(overrides: Partial<S3DownloadResult> = {}): S3Down
 	return {
 		content: new Uint8Array([1, 2, 3]),
 		etag: 'etag-download',
-		size: 3,
-		lastModified: 100,
 		...overrides,
 	};
 }
@@ -303,8 +293,6 @@ describe('SyncPlanner', () => {
 			]);
 			s3Provider.headObject.mockResolvedValue({
 				etag: 'remote-etag',
-				size: 12,
-				lastModified: 10,
 				fingerprint: 'sha256:same',
 			});
 			mockedReadVaultFile.mockResolvedValue('same content');
@@ -330,7 +318,7 @@ describe('SyncPlanner', () => {
 		it('filters skip items when local and remote both match the baseline', async () => {
 			addVaultFile('stable.md', '1234567890', 500, 10);
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/stable.md', size: 10, etag: '"etag-stable"' }),
+				createRemoteObject({ key: 'vault/stable.md', etag: '"etag-stable"' }),
 			]);
 			journal.getAllStateRecords.mockResolvedValue([
 				createStateRecord({
@@ -338,7 +326,6 @@ describe('SyncPlanner', () => {
 					contentFingerprint: 'sha256:stable',
 					localMtime: 500,
 					localSize: 10,
-					remoteObjectSize: 10,
 					remoteEtag: 'etag-stable',
 				}),
 			]);
@@ -640,9 +627,9 @@ describe('SyncPlanner', () => {
 			const result = await getPlannerPrivate(planner).classifyRemote({
 				path: 'etag.md',
 				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/etag.md', etag: 'etag-1', size: 10 }),
+					objectInfo: createRemoteObject({ key: 'vault/etag.md', etag: 'etag-1' }),
 				},
-				baseline: createStateRecord({ path: 'etag.md', remoteEtag: 'etag-1', remoteObjectSize: 10 }),
+				baseline: createStateRecord({ path: 'etag.md', remoteEtag: 'etag-1' }),
 				hasConflictArtifacts: false,
 			});
 
@@ -651,100 +638,44 @@ describe('SyncPlanner', () => {
 			expect(s3Provider.downloadFileWithMetadata).not.toHaveBeenCalled();
 		});
 
-		it('returns R= when the remote size differs but the fingerprint matches the baseline', async () => {
+		it('returns R= when the ETag differs but the fingerprint matches the baseline', async () => {
 			s3Provider.headObject.mockResolvedValue({
 				etag: 'etag-2',
-				size: 30,
-				lastModified: 10,
 				fingerprint: 'sha256:match',
 			});
 
 			const result = await getPlannerPrivate(planner).classifyRemote({
-				path: 'size-match.md',
+				path: 'fp-match.md',
 				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/size-match.md', etag: 'etag-2', size: 30 }),
+					objectInfo: createRemoteObject({ key: 'vault/fp-match.md', etag: 'etag-2' }),
 				},
 				baseline: createStateRecord({
-					path: 'size-match.md',
+					path: 'fp-match.md',
 					contentFingerprint: 'sha256:match',
 					remoteEtag: 'etag-1',
-					remoteObjectSize: 10,
 				}),
 				hasConflictArtifacts: false,
 			});
 
 			expect(result).toBe('R=');
-			expect(s3Provider.headObject).toHaveBeenCalledWith('vault/size-match.md');
+			expect(s3Provider.headObject).toHaveBeenCalledWith('vault/fp-match.md');
 		});
 
-		it('returns RΔ when the remote size differs and the fingerprint differs from the baseline', async () => {
+		it('returns RΔ when the ETag differs and the fingerprint differs from the baseline', async () => {
 			s3Provider.headObject.mockResolvedValue({
 				etag: 'etag-2',
-				size: 30,
-				lastModified: 10,
 				fingerprint: 'sha256:remote',
 			});
 
 			const result = await getPlannerPrivate(planner).classifyRemote({
-				path: 'size-diff.md',
+				path: 'fp-diff.md',
 				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/size-diff.md', etag: 'etag-2', size: 30 }),
+					objectInfo: createRemoteObject({ key: 'vault/fp-diff.md', etag: 'etag-2' }),
 				},
 				baseline: createStateRecord({
-					path: 'size-diff.md',
+					path: 'fp-diff.md',
 					contentFingerprint: 'sha256:baseline',
 					remoteEtag: 'etag-1',
-					remoteObjectSize: 10,
-				}),
-				hasConflictArtifacts: false,
-			});
-
-			expect(result).toBe('RΔ');
-		});
-
-		it('returns R= when the remote size matches and the fingerprint matches the baseline', async () => {
-			s3Provider.headObject.mockResolvedValue({
-				etag: 'etag-2',
-				size: 10,
-				lastModified: 10,
-				fingerprint: 'sha256:match',
-			});
-
-			const result = await getPlannerPrivate(planner).classifyRemote({
-				path: 'same-size-match.md',
-				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/same-size-match.md', etag: 'etag-2', size: 10 }),
-				},
-				baseline: createStateRecord({
-					path: 'same-size-match.md',
-					contentFingerprint: 'sha256:match',
-					remoteEtag: 'etag-1',
-					remoteObjectSize: 10,
-				}),
-				hasConflictArtifacts: false,
-			});
-
-			expect(result).toBe('R=');
-		});
-
-		it('returns RΔ when the remote size matches and the fingerprint differs from the baseline', async () => {
-			s3Provider.headObject.mockResolvedValue({
-				etag: 'etag-2',
-				size: 10,
-				lastModified: 10,
-				fingerprint: 'sha256:other',
-			});
-
-			const result = await getPlannerPrivate(planner).classifyRemote({
-				path: 'same-size-diff.md',
-				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/same-size-diff.md', etag: 'etag-2', size: 10 }),
-				},
-				baseline: createStateRecord({
-					path: 'same-size-diff.md',
-					contentFingerprint: 'sha256:baseline',
-					remoteEtag: 'etag-1',
-					remoteObjectSize: 10,
 				}),
 				hasConflictArtifacts: false,
 			});
@@ -761,13 +692,12 @@ describe('SyncPlanner', () => {
 			const result = await getPlannerPrivate(planner).classifyRemote({
 				path: 'fallback.md',
 				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/fallback.md', etag: 'etag-2', size: 20 }),
+					objectInfo: createRemoteObject({ key: 'vault/fallback.md', etag: 'etag-2' }),
 				},
 				baseline: createStateRecord({
 					path: 'fallback.md',
 					contentFingerprint: 'sha256:match',
 					remoteEtag: 'etag-1',
-					remoteObjectSize: 10,
 				}),
 				hasConflictArtifacts: false,
 			});

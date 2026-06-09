@@ -117,8 +117,6 @@ export class SyncEngine {
 				filesUploaded: 0,
 				filesDownloaded: 0,
 				filesDeleted: 0,
-				filesAdopted: 0,
-				filesForgotten: 0,
 				conflicts: [],
 				errors: [{ path: '', action: 'skip', message, recoverable: false }],
 			};
@@ -208,8 +206,6 @@ export class SyncEngine {
 			filesUploaded: 0,
 			filesDownloaded: 0,
 			filesDeleted: 0,
-			filesAdopted: 0,
-			filesForgotten: 0,
 			conflicts: [],
 			errors: [{ path: '', action, message, recoverable: false }],
 		};

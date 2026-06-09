@@ -44,8 +44,6 @@ function createSyncResult(overrides: Partial<SyncResult> = {}): SyncResult {
 		filesUploaded: 1,
 		filesDownloaded: 0,
 		filesDeleted: 0,
-		filesAdopted: 0,
-		filesForgotten: 0,
 		conflicts: [],
 		errors: [],
 		...overrides,

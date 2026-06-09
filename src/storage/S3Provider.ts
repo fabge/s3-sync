@@ -83,7 +83,7 @@ export class S3Provider {
                 throw new Error('Invalid Secret Access Key');
             }
             if (err.message?.includes('ENOTFOUND') || err.message?.includes('getaddrinfo')) {
-                throw new Error('Could not reach endpoint. Check your endpoint URL and network connection.');
+                throw new Error('Could not reach S3. Check the region and your network connection.');
             }
             throw new Error(`Connection failed: ${err.message || 'Unknown error'}`);
         }
@@ -104,8 +104,6 @@ export class S3Provider {
                 if (item.Key && !item.Key.endsWith('/')) {
                     objects.push({
                         key: item.Key,
-                        size: item.Size || 0,
-                        lastModified: item.LastModified || new Date(),
                         etag: item.ETag,
                     });
                 }
@@ -216,15 +214,11 @@ export class S3Provider {
 
     private toS3HeadResult(response: {
         ETag?: string;
-        ContentLength?: number;
-        LastModified?: Date;
         Metadata?: Record<string, string>;
     }): S3HeadResult {
         const metadata = response.Metadata ?? {};
         return {
             etag: normalizeEntityTag(response.ETag),
-            size: response.ContentLength || 0,
-            lastModified: response.LastModified?.getTime() || 0,
             fingerprint: metadata['obsidian-fingerprint'],
         };
     }

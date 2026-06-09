@@ -106,8 +106,6 @@ function createSyncResult(overrides: Partial<SyncResult> = {}): SyncResult {
 		filesUploaded: 0,
 		filesDownloaded: 0,
 		filesDeleted: 0,
-		filesAdopted: 0,
-		filesForgotten: 0,
 		conflicts: [],
 		errors: [],
 		...overrides,
@@ -436,8 +434,6 @@ describe('SyncEngine', () => {
 				filesUploaded: 0,
 				filesDownloaded: 0,
 				filesDeleted: 0,
-				filesAdopted: 0,
-				filesForgotten: 0,
 				conflicts: [],
 				errors: [{ path: '', action: 'skip', message: 'planner exploded', recoverable: false }],
 			});

@@ -194,9 +194,7 @@ export default class S3SyncPlugin extends Plugin {
 		const filesSynced =
 			result.filesUploaded
 			+ result.filesDownloaded
-			+ result.filesDeleted
-			+ result.filesAdopted
-			+ result.filesForgotten;
+			+ result.filesDeleted;
 
 		new Notice(
 			`Sync completed: ${filesSynced} file(s) changed — ${result.filesUploaded} uploaded, ${result.filesDownloaded} downloaded, ${result.filesDeleted} deleted`,
