@@ -121,11 +121,9 @@ function createStateRecord(overrides: Partial<SyncStateRecord> = {}): SyncStateR
 		contentFingerprint: 'sha256:baseline',
 		localMtime: 100,
 		localSize: 10,
-		remoteClientMtime: 100,
 		remoteObjectSize: 10,
 		remoteEtag: 'etag-baseline',
 		remoteLastModified: 100,
-		lastWriterDeviceId: 'device-1',
 		lastSyncedAt: 100,
 		...overrides,
 	};

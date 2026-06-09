@@ -228,17 +228,7 @@ export class S3Provider {
             size: response.ContentLength || 0,
             lastModified: response.LastModified?.getTime() || 0,
             fingerprint: metadata['obsidian-fingerprint'],
-            clientMtime: this.parseMetadataNumber(metadata['obsidian-mtime']),
-            deviceId: metadata['obsidian-device-id'],
         };
-    }
-
-    private parseMetadataNumber(value?: string): number | undefined {
-        if (!value) {
-            return undefined;
-        }
-        const parsed = parseInt(value, 10);
-        return Number.isNaN(parsed) ? undefined : parsed;
     }
 
     /** Upload with optional conditional headers; ETag quotes are re-added for S3. */

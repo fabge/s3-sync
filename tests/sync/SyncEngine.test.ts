@@ -151,7 +151,6 @@ function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineCon
 		journal as unknown as SyncJournal,
 		pathCodec as unknown as SyncPathCodec,
 		settings,
-		'device-123',
 	);
 
 	return {
@@ -310,6 +309,27 @@ describe('SyncEngine', () => {
 			);
 			expect(context.journal.setMetadata).toHaveBeenNthCalledWith(2, 'lastSuccessfulSyncAt', 12_345);
 			nowSpy.mockRestore();
+		});
+
+		it('does not record a destination fingerprint when planning fails', async () => {
+			const context = createEngineContext();
+			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+			context.journal.getMetadata.mockImplementation(async (key: string) => {
+				if (key === 'destinationFingerprint') {
+					return undefined;
+				}
+				if (key === 'lastSuccessfulSyncAt') {
+					return 111;
+				}
+				return undefined;
+			});
+			context.planner.buildPlan.mockRejectedValueOnce(new Error('list failed'));
+
+			const result = await context.engine.sync();
+
+			expect(result.success).toBe(false);
+			expect(context.journal.setMetadata).not.toHaveBeenCalled();
+			consoleErrorSpy.mockRestore();
 		});
 
 		it('persists lastSuccessfulSyncAt metadata after a successful sync', async () => {
@@ -472,7 +492,6 @@ describe('SyncEngine', () => {
 				context.s3Provider,
 				context.journal,
 				context.pathCodec,
-				'device-123',
 			);
 		});
 

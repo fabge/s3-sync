@@ -24,17 +24,12 @@ const MAX_CONCURRENCY = 4;
 const MAX_ERRORS = 3;
 
 export class SyncExecutor {
-	private deviceId: string;
-
 	constructor(
 		private app: App,
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
 		private pathCodec: SyncPathCodec,
-		deviceId: string,
-	) {
-		this.deviceId = deviceId;
-	}
+	) {}
 
 	async execute(plan: SyncPlanItem[]): Promise<SyncResult> {
 		const result: SyncResult = {
@@ -127,26 +122,27 @@ export class SyncExecutor {
 	private async executeAdopt(item: SyncPlanItem): Promise<void> {
 		const remoteKey = this.pathCodec.localToRemote(item.path);
 		const head = await this.s3Provider.headObject(remoteKey);
-		const localFile = this.app.vault.getAbstractFileByPath(item.path);
+		if (!head) {
+			throw new Error(`Remote file disappeared during adopt: ${item.path}`);
+		}
 
-		const localContent = localFile instanceof TFile
-			? await readVaultFile(this.app.vault, localFile)
-			: null;
-		const contentFingerprint = localContent
-			? await fingerprint(localContent)
-			: head?.fingerprint ?? '';
+		const localFile = this.app.vault.getAbstractFileByPath(item.path);
+		if (!(localFile instanceof TFile)) {
+			throw new Error(`Local file disappeared during adopt: ${item.path}`);
+		}
+
+		const localContent = await readVaultFile(this.app.vault, localFile);
+		const contentFingerprint = await fingerprint(localContent);
 
 		const record: SyncStateRecord = {
 			path: item.path,
 			remoteKey,
 			contentFingerprint,
-			localMtime: localFile instanceof TFile ? localFile.stat.mtime : 0,
-			localSize: localFile instanceof TFile ? localFile.stat.size : 0,
-			remoteClientMtime: head?.clientMtime ?? null,
-			remoteObjectSize: head?.size ?? 0,
-			remoteEtag: head?.etag,
-			remoteLastModified: head?.lastModified ?? null,
-			lastWriterDeviceId: head?.deviceId,
+			localMtime: localFile.stat.mtime,
+			localSize: localFile.stat.size,
+			remoteObjectSize: head.size,
+			remoteEtag: head.etag,
+			remoteLastModified: head.lastModified,
 			lastSyncedAt: Date.now(),
 		};
 
@@ -172,8 +168,6 @@ export class SyncExecutor {
 			ifNoneMatch: item.expectRemoteAbsent ? '*' : undefined,
 			metadata: {
 				'obsidian-fingerprint': contentFingerprint,
-				'obsidian-mtime': String(file.stat.mtime),
-				'obsidian-device-id': this.deviceId,
 			},
 		});
 
@@ -183,11 +177,9 @@ export class SyncExecutor {
 			contentFingerprint,
 			localMtime: file.stat.mtime,
 			localSize: file.stat.size,
-			remoteClientMtime: file.stat.mtime,
 			remoteObjectSize: payload.length,
 			remoteEtag: etag,
 			remoteLastModified: null,
-			lastWriterDeviceId: this.deviceId,
 			lastSyncedAt: Date.now(),
 		};
 
@@ -221,11 +213,9 @@ export class SyncExecutor {
 			contentFingerprint: await fingerprint(content),
 			localMtime: localFile.stat.mtime,
 			localSize: localFile.stat.size,
-			remoteClientMtime: downloaded.clientMtime ?? null,
 			remoteObjectSize: downloaded.size,
 			remoteEtag: downloaded.etag,
 			remoteLastModified: downloaded.lastModified,
-			lastWriterDeviceId: downloaded.deviceId,
 			lastSyncedAt: Date.now(),
 		};
 

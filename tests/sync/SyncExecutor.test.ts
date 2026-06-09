@@ -202,8 +202,6 @@ function createDownloadResult(overrides: Partial<S3DownloadResult> = {}): S3Down
 		etag: 'remote-etag',
 		size: 3,
 		lastModified: 456,
-		clientMtime: 789,
-		deviceId: 'remote-device',
 		...overrides,
 	};
 }
@@ -214,8 +212,6 @@ function createHeadResult(overrides: Partial<S3HeadResult> = {}): S3HeadResult {
 		size: 11,
 		lastModified: 999,
 		fingerprint: 'remote-fingerprint',
-		clientMtime: 777,
-		deviceId: 'remote-device',
 		...overrides,
 	};
 }
@@ -292,7 +288,6 @@ function createExecutorContext(): ExecutorContext {
 		s3Provider as never,
 		journal as never,
 		pathCodec as never,
-		'device-123',
 	);
 
 	const internals = executor as unknown as ExecutorInternals;
@@ -563,32 +558,35 @@ describe('SyncExecutor', () => {
 				contentFingerprint: 'local-fingerprint',
 				localMtime: 321,
 				localSize: 10,
-				remoteClientMtime: 777,
 				remoteObjectSize: 11,
 				remoteEtag: 'remote-etag',
 				remoteLastModified: 999,
-				lastWriterDeviceId: 'remote-device',
 				lastSyncedAt: expect.any(Number),
 			}));
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
 		});
 
-		it('falls back to an empty fingerprint when the local file and remote metadata are missing', async () => {
-			const { internals, app, s3Provider, journal } = createExecutorContext();
-			app.vault.getAbstractFileByPath.mockReturnValue(null);
+		it('throws when the remote file disappears before adopt executes', async () => {
+			const { internals, app, addFile, s3Provider, journal } = createExecutorContext();
+			const file = addFile('notes/test.md', 'local body');
+			app.vault.getAbstractFileByPath.mockReturnValue(file);
 			s3Provider.headObject.mockResolvedValue(null);
 
-			await internals.executeAdopt(createPlanItem('adopt'));
+			await expect(internals.executeAdopt(createPlanItem('adopt'))).rejects.toThrow('Remote file disappeared during adopt: notes/test.md');
 
 			expect(mockedFingerprint).not.toHaveBeenCalled();
-			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
-				contentFingerprint: '',
-				localMtime: 0,
-				localSize: 0,
-				remoteClientMtime: null,
-				remoteObjectSize: 0,
-				remoteLastModified: null,
-			}));
+			expect(journal.setStateRecord).not.toHaveBeenCalled();
+		});
+
+		it('throws when the local file disappears before adopt executes', async () => {
+			const { internals, app, s3Provider, journal } = createExecutorContext();
+			app.vault.getAbstractFileByPath.mockReturnValue(null);
+			s3Provider.headObject.mockResolvedValue(createHeadResult());
+
+			await expect(internals.executeAdopt(createPlanItem('adopt'))).rejects.toThrow('Local file disappeared during adopt: notes/test.md');
+
+			expect(mockedFingerprint).not.toHaveBeenCalled();
+			expect(journal.setStateRecord).not.toHaveBeenCalled();
 		});
 	});
 
@@ -611,8 +609,6 @@ describe('SyncExecutor', () => {
 				ifNoneMatch: '*',
 				metadata: {
 					'obsidian-fingerprint': 'upload-fingerprint',
-					'obsidian-mtime': '444',
-					'obsidian-device-id': 'device-123',
 				},
 			});
 			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
@@ -621,11 +617,9 @@ describe('SyncExecutor', () => {
 				contentFingerprint: 'upload-fingerprint',
 				localMtime: 444,
 				localSize: 9,
-				remoteClientMtime: 444,
 				remoteObjectSize: 9,
 				remoteEtag: 'etag-uploaded',
 				remoteLastModified: null,
-				lastWriterDeviceId: 'device-123',
 			}));
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
 		});
@@ -675,11 +669,9 @@ describe('SyncExecutor', () => {
 				contentFingerprint: 'fingerprint-1',
 				localMtime: 654,
 				localSize: 11,
-				remoteClientMtime: 789,
 				remoteObjectSize: 3,
 				remoteEtag: 'remote-etag',
 				remoteLastModified: 456,
-				lastWriterDeviceId: 'remote-device',
 			}));
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
 		});
@@ -820,7 +812,6 @@ describe('SyncExecutor', () => {
 				contentFingerprint: 'baseline-fingerprint',
 				localMtime: 1,
 				localSize: 1,
-				remoteClientMtime: 1,
 				remoteObjectSize: 1,
 				remoteLastModified: 1,
 				lastSyncedAt: 1,

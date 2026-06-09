@@ -8,7 +8,6 @@ import { SyncPathCodec } from './sync/SyncPathCodec';
 import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
 import { registerPluginCommands } from './commands';
-import { getOrCreateDeviceId } from './deviceId';
 
 export default class S3SyncPlugin extends Plugin {
 	settings!: S3SyncSettings;
@@ -22,8 +21,6 @@ export default class S3SyncPlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
-
-		const deviceId = getOrCreateDeviceId(this.app);
 
 		this.s3Provider = new S3Provider(this.settings);
 		this.statusBar = new StatusBar(this);
@@ -43,7 +40,6 @@ export default class S3SyncPlugin extends Plugin {
 			this.syncJournal,
 			this.pathCodec,
 			this.settings,
-			deviceId,
 		);
 
 		this.syncScheduler = new SyncScheduler(this, this.syncEngine, this.settings);

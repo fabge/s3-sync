@@ -72,18 +72,17 @@ This plugin is a sync tool, so by design it enumerates vault files and reads or 
 
 | Destination | What is stored there |
 | :--- | :--- |
-| **S3 bucket root** | Synced vault files as normal S3 objects, plus custom metadata such as content fingerprint, client mtime, device ID, and payload format. |
+| **S3 bucket root** | Synced vault files as normal S3 objects, plus content-fingerprint metadata. |
 | **Local vault** | Downloaded files, updated files, parent folders created as needed, and `LOCAL_` / `REMOTE_` conflict artifacts. |
 | **Local vault trash** | Files deleted remotely are removed through Obsidian's trash flow, respecting the user's deleted-files preference. |
 | **IndexedDB** | Per-file sync baselines, unresolved conflict records, and metadata such as the last successful sync time. |
-| **Vault-local app storage** | A generated device identifier used only for write attribution across devices. |
 | **`data.json`** | Plugin settings such as AWS credentials, sync toggles, interval, threshold, and exclude patterns. |
 
 ### What leaves your device
 
 - **Only traffic to the configured AWS S3 bucket** for connection tests, listings, uploads, downloads, and deletes.
 - **Vault file contents** for in-scope files.
-- **Object metadata** written by the plugin: content fingerprint, client mtime, device ID, and payload format.
+- **Object metadata** written by the plugin: content fingerprint.
 - **No telemetry, analytics, crash reporting, or update polling.**
 
 ### What is not included
@@ -105,20 +104,13 @@ You resolve the conflict manually, keep the final file you want, and sync again.
 
 ## Multi-device behavior
 
-Each installation gets its own local device ID. That ID is written into S3 object metadata so devices can tell which installation last uploaded a file.
-
 - Each device keeps its own IndexedDB journal.
 - Sync decisions compare **local state**, **remote S3 state**, and the **last successful baseline** remembered on that device.
 - If two devices modify the same file independently, the plugin creates `LOCAL_` and `REMOTE_` copies instead of silently picking one side.
 
 ## Bucket layout
 
-Files are stored directly at the bucket root as normal S3 objects. Custom metadata is used for sync bookkeeping such as:
-
-- content fingerprint
-- client mtime
-- device ID
-- payload format (`plaintext-v1`)
+Files are stored directly at the bucket root as normal S3 objects. The plugin writes content-fingerprint metadata for sync bookkeeping.
 
 ## Security and operational notes
 
@@ -176,8 +168,7 @@ This plugin is a stripped-down reinterpretation of
 the original ("OG") project that inspired it. That repo is the full-featured
 take (multiple storage providers, encryption, scheduled backups). This one
 deliberately keeps a much smaller surface: AWS S3 only, sync only, no
-encryption. Several safety and correctness ideas here (vault-local device ID,
-weak-ETag normalization, destination-fingerprint / stale-journal protection,
-the destructive-plan block, and the **Reset sync journal** action) are borrowed
-from it. Credit for the original concept goes to its authors.
-
+encryption. Several safety and correctness ideas here (weak-ETag normalization,
+destination-fingerprint / stale-journal protection, the destructive-plan block,
+and the **Reset sync journal** action) are borrowed from it. Credit for the
+original concept goes to its authors.

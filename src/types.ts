@@ -48,11 +48,9 @@ export interface SyncStateRecord {
 	contentFingerprint: string;
 	localMtime: number;
 	localSize: number;
-	remoteClientMtime: number | null;
 	remoteObjectSize: number;
 	remoteEtag?: string;
 	remoteLastModified: number | null;
-	lastWriterDeviceId?: string;
 	lastSyncedAt: number;
 }
 
@@ -118,8 +116,6 @@ export interface S3HeadResult {
 	size: number;
 	lastModified: number;
 	fingerprint?: string;
-	clientMtime?: number;
-	deviceId?: string;
 }
 
 export interface S3DownloadResult {
@@ -128,8 +124,6 @@ export interface S3DownloadResult {
 	size: number;
 	lastModified: number;
 	fingerprint?: string;
-	clientMtime?: number;
-	deviceId?: string;
 }
 
 export type SyncStatus =

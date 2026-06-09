@@ -38,7 +38,6 @@ export class SyncEngine {
 		private journal: SyncJournal,
 		private pathCodec: SyncPathCodec,
 		private settings: S3SyncSettings,
-		private deviceId: string,
 	) {}
 
 	updateSettings(settings: S3SyncSettings): void {
@@ -58,7 +57,11 @@ export class SyncEngine {
 
 		try {
 			const startFingerprint = computeDestinationFingerprint(this.settings);
-			const destinationGuardResult = await this.reconcileDestinationFingerprint(startFingerprint);
+			const storedDestinationFingerprint = await this.getStoredDestinationFingerprint();
+			const destinationGuardResult = this.checkDestinationFingerprint(
+				storedDestinationFingerprint,
+				startFingerprint,
+			);
 			if (destinationGuardResult) {
 				return destinationGuardResult;
 			}
@@ -77,6 +80,12 @@ export class SyncEngine {
 					'Aborted: destination changed during sync. The pending sync was discarded; run sync again after saving the new bucket or region.',
 				);
 			}
+			if (storedDestinationFingerprint === undefined) {
+				await withJournalContext(
+					'recording destination fingerprint',
+					() => this.journal.setMetadata(DESTINATION_FINGERPRINT_KEY, startFingerprint),
+				);
+			}
 			const destructivePlanError = await this.checkDestructivePlan(plan);
 			if (destructivePlanError) {
 				return this.buildBlockedResult(destructivePlanError, 'delete-local');
@@ -88,7 +97,6 @@ export class SyncEngine {
 				this.s3Provider,
 				this.journal,
 				this.pathCodec,
-				this.deviceId,
 			);
 			const result = await executor.execute(plan);
 
@@ -147,22 +155,19 @@ export class SyncEngine {
 		}
 	}
 
-	/** Stale-journal / wrong-bucket protection. First sight records the destination. */
-	private async reconcileDestinationFingerprint(current: string): Promise<SyncResult | null> {
-		const stored = await withJournalContext(
+	/** Stale-journal / wrong-bucket protection. First successful listing records the destination. */
+	private async getStoredDestinationFingerprint(): Promise<string | number | boolean | undefined> {
+		return await withJournalContext(
 			'reading stored destination fingerprint',
 			() => this.journal.getMetadata(DESTINATION_FINGERPRINT_KEY),
 		);
+	}
 
-		if (stored === current) {
-			return null;
-		}
-
-		if (stored === undefined) {
-			await withJournalContext(
-				'recording destination fingerprint',
-				() => this.journal.setMetadata(DESTINATION_FINGERPRINT_KEY, current),
-			);
+	private checkDestinationFingerprint(
+		stored: string | number | boolean | undefined,
+		current: string,
+	): SyncResult | null {
+		if (stored === undefined || stored === current) {
 			return null;
 		}
 
