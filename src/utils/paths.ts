@@ -16,20 +16,29 @@ export function getExtension(path: string): string {
     return lastDot >= 0 ? filename.substring(lastDot + 1) : '';
 }
 
+// Patterns are matched against every vault file, remote object, and baseline
+// each sync cycle; cache the compiled form instead of recompiling per call.
+const globRegexCache = new Map<string, RegExp>();
+
 /** `*` matches within a path segment; `**` matches across segments. */
 function matchGlob(path: string, pattern: string): boolean {
     const normalized = normalizePath(path);
 
-    // Stash wildcards as placeholders, escape regex metachars, then restore:
-    // single * → [^/]* (within a segment), ** → .* (across segments).
-    const regexPattern = pattern
-        .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-        .replace(/\*/g, '<<<STAR>>>')
-        .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-        .replace(/<<<STAR>>>/g, '[^/]*')
-        .replace(/<<<GLOBSTAR>>>/g, '.*');
+    let regex = globRegexCache.get(pattern);
+    if (!regex) {
+        // Stash wildcards as placeholders, escape regex metachars, then restore:
+        // single * → [^/]* (within a segment), ** → .* (across segments).
+        const regexPattern = pattern
+            .replace(/\*\*/g, '<<<GLOBSTAR>>>')
+            .replace(/\*/g, '<<<STAR>>>')
+            .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+            .replace(/<<<STAR>>>/g, '[^/]*')
+            .replace(/<<<GLOBSTAR>>>/g, '.*');
+        regex = new RegExp(`^${regexPattern}$`);
+        globRegexCache.set(pattern, regex);
+    }
 
-    return new RegExp(`^${regexPattern}$`).test(normalized);
+    return regex.test(normalized);
 }
 
 export function matchesAnyGlob(path: string, patterns: string[]): boolean {

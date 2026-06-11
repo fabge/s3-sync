@@ -1,4 +1,7 @@
-/** Only add extensions here when they are lossless as UTF-8; binary files would corrupt. */
+/**
+ * Sync I/O always treats content as raw bytes so no encoding round-trip can
+ * corrupt files; the text/binary kind only picks the upload content type.
+ */
 
 import { TFile, Vault } from 'obsidian';
 import { VaultFileKind } from '../types';
@@ -40,11 +43,7 @@ export function getVaultFileKind(path: string): VaultFileKind {
     return TEXT_FILE_EXTENSIONS.has(extension) ? 'text' : 'binary';
 }
 
-export async function readVaultFile(vault: Vault, file: TFile): Promise<string | Uint8Array> {
-    if (getVaultFileKind(file.path) === 'text') {
-        return await vault.read(file);
-    }
-
+export async function readVaultFile(vault: Vault, file: TFile): Promise<Uint8Array> {
     return new Uint8Array(await vault.readBinary(file));
 }
 

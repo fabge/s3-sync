@@ -2,6 +2,7 @@
 
 import { requestUrl, RequestUrlParam } from 'obsidian';
 import { HttpRequest, HttpResponse } from '@smithy/protocol-http';
+import { buildQueryString } from '@smithy/querystring-builder';
 import { HttpHandlerOptions } from '@smithy/types';
 
 export class ObsidianHttpHandler {
@@ -85,20 +86,11 @@ export class ObsidianHttpHandler {
         }
         url += path;
 
-        const query = request.query;
-        if (query && Object.keys(query).length > 0) {
-            const queryParts: string[] = [];
-            for (const [key, value] of Object.entries(query)) {
-                const values = Array.isArray(value) ? value : [value];
-                for (const v of values) {
-                    if (v !== null && v !== undefined) {
-                        queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(v)}`);
-                    }
-                }
-            }
-            if (queryParts.length > 0) {
-                url += (url.includes('?') ? '&' : '?') + queryParts.join('&');
-            }
+        // buildQueryString uses the same escaping as the SigV4 signer; an ad-hoc
+        // encodeURIComponent serialization can differ on !'()* and break signatures.
+        const queryString = request.query ? buildQueryString(request.query) : '';
+        if (queryString) {
+            url += `?${queryString}`;
         }
 
         return url;

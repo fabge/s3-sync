@@ -101,6 +101,8 @@ When both local and remote changed in incompatible ways, the plugin keeps both c
 
 You resolve the conflict manually, keep the final file you want, and sync again.
 
+Deleting both artifact files without recreating the original restores the remote copy on the next sync — dismissing a conflict never deletes anything.
+
 ## Multi-device behavior
 
 - Each device keeps its own IndexedDB journal.

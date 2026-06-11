@@ -245,19 +245,22 @@ describe('SyncScheduler', () => {
 	});
 
 	/**
-	 * Verifies settings-driven restart behavior and next-sync-time reporting.
+	 * Verifies updateSettings only stores settings; main owns the restart.
 	 */
-	describe('settings updates and next sync time', () => {
-		it('restarts the scheduler with the updated settings when updateSettings is called while running', () => {
+	describe('settings updates', () => {
+		it('does not restart the timer itself; the next start uses the updated interval', () => {
 			const { scheduler } = createSchedulerContext({ syncIntervalMinutes: 5 });
 
 			scheduler.start();
 			scheduler.updateSettings(createSettings({ syncIntervalMinutes: 10 }));
 
-			expect(setIntervalSpy).toHaveBeenCalledTimes(2);
-			expect(setIntervalSpy).toHaveBeenNthCalledWith(1, expect.any(Function), 300000);
+			expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+			expect(clearIntervalSpy).not.toHaveBeenCalled();
+
+			scheduler.stop();
+			scheduler.start();
+
 			expect(setIntervalSpy).toHaveBeenNthCalledWith(2, expect.any(Function), 600000);
-			expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
 		});
 	});
 });

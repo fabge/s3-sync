@@ -45,11 +45,6 @@ export class SyncJournal {
 		}
 	}
 
-	async getStateRecord(path: string): Promise<SyncStateRecord | undefined> {
-		this.ensureInitialized();
-		return await this.db!.get('stateRecords', path);
-	}
-
 	async setStateRecord(record: SyncStateRecord): Promise<void> {
 		this.ensureInitialized();
 		await this.db!.put('stateRecords', record);

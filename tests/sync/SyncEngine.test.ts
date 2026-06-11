@@ -8,10 +8,6 @@ jest.mock('../../src/sync/SyncJournal', () => ({
 	SyncJournal: jest.fn(),
 }));
 
-jest.mock('../../src/sync/SyncPathCodec', () => ({
-	SyncPathCodec: jest.fn(),
-}));
-
 jest.mock('../../src/sync/SyncPlanner', () => ({
 	SyncPlanner: jest.fn(),
 }));
@@ -25,13 +21,11 @@ import { S3Provider } from '../../src/storage/S3Provider';
 import { SyncEngine } from '../../src/sync/SyncEngine';
 import { SyncExecutor } from '../../src/sync/SyncExecutor';
 import { SyncJournal } from '../../src/sync/SyncJournal';
-import { SyncPathCodec } from '../../src/sync/SyncPathCodec';
-import { SyncPlanner } from '../../src/sync/SyncPlanner';
+import { SyncPlan, SyncPlanner } from '../../src/sync/SyncPlanner';
 import { DEFAULT_SETTINGS, S3SyncSettings, SyncPlanItem, SyncResult } from '../../src/types';
 
 interface MockPlanner {
-	countSyncedFiles: jest.Mock<Promise<number>, []>;
-	buildPlan: jest.Mock<Promise<SyncPlanItem[]>, []>;
+	buildPlan: jest.Mock<Promise<SyncPlan>, []>;
 }
 
 interface MockExecutor {
@@ -42,10 +36,6 @@ interface MockJournal {
 	getMetadata: jest.Mock<Promise<string | number | boolean | undefined>, [string]>;
 	setMetadata: jest.Mock<Promise<void>, [string, string | number | boolean]>;
 	resetForDestination: jest.Mock<Promise<void>, [string]>;
-}
-
-interface MockPathCodec {
-	readonly kind: 'path-codec';
 }
 
 interface MockS3Provider {
@@ -62,7 +52,6 @@ interface EngineContext {
 	app: App;
 	s3Provider: MockS3Provider;
 	journal: MockJournal;
-	pathCodec: MockPathCodec;
 	planner: MockPlanner;
 	executor: MockExecutor;
 	settings: S3SyncSettings;
@@ -94,7 +83,17 @@ function createPlanItem(path: string, action: SyncPlanItem['action'] = 'skip'): 
 	return {
 		path,
 		action,
-		reason: `${action} ${path}`,
+	};
+}
+
+function createPlan(
+	items: SyncPlanItem[] = [],
+	counts: Partial<Pick<SyncPlan, 'syncedFileCount' | 'changedSyncedFileCount'>> = {},
+): SyncPlan {
+	return {
+		items,
+		syncedFileCount: counts.syncedFileCount ?? 10,
+		changedSyncedFileCount: counts.changedSyncedFileCount ?? 0,
 	};
 }
 
@@ -129,12 +128,8 @@ function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineCon
 		setMetadata: jest.fn().mockResolvedValue(undefined),
 		resetForDestination: jest.fn().mockResolvedValue(undefined),
 	};
-	const pathCodec: MockPathCodec = {
-		kind: 'path-codec',
-	};
 	const planner: MockPlanner = {
-		countSyncedFiles: jest.fn().mockResolvedValue(10),
-		buildPlan: jest.fn().mockResolvedValue([]),
+		buildPlan: jest.fn().mockResolvedValue(createPlan()),
 	};
 	const executor: MockExecutor = {
 		execute: jest.fn().mockResolvedValue(createSyncResult()),
@@ -147,7 +142,6 @@ function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineCon
 		app,
 		s3Provider as unknown as S3Provider,
 		journal as unknown as SyncJournal,
-		pathCodec as unknown as SyncPathCodec,
 		settings,
 	);
 
@@ -155,7 +149,6 @@ function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineCon
 		app,
 		s3Provider,
 		journal,
-		pathCodec,
 		planner,
 		executor,
 		settings,
@@ -180,7 +173,7 @@ describe('SyncEngine', () => {
 	describe('sync lifecycle', () => {
 		it('throws when sync is called while another sync is already in progress', async () => {
 			const context = createEngineContext();
-			const plannerDeferred = createDeferred<SyncPlanItem[]>();
+			const plannerDeferred = createDeferred<SyncPlan>();
 			context.planner.buildPlan.mockReturnValueOnce(plannerDeferred.promise);
 
 			const activeSync = context.engine.sync();
@@ -188,7 +181,7 @@ describe('SyncEngine', () => {
 			expect(context.engine.isInProgress()).toBe(true);
 			await expect(context.engine.sync()).rejects.toThrow('Sync already in progress');
 
-			plannerDeferred.resolve([]);
+			plannerDeferred.resolve(createPlan());
 			await activeSync;
 		});
 
@@ -229,13 +222,13 @@ describe('SyncEngine', () => {
 	describe('in-progress guard', () => {
 		it('reports in-progress during a sync and clears it afterward', async () => {
 			const context = createEngineContext();
-			const plannerDeferred = createDeferred<SyncPlanItem[]>();
+			const plannerDeferred = createDeferred<SyncPlan>();
 			context.planner.buildPlan.mockReturnValueOnce(plannerDeferred.promise);
 
 			const syncPromise = context.engine.sync();
 			expect(context.engine.isInProgress()).toBe(true);
 
-			plannerDeferred.resolve([]);
+			plannerDeferred.resolve(createPlan());
 			await syncPromise;
 			expect(context.engine.isInProgress()).toBe(false);
 		});
@@ -257,7 +250,7 @@ describe('SyncEngine', () => {
 	describe('planner and executor orchestration', () => {
 		it('calls planner.buildPlan before executor.execute during a sync cycle', async () => {
 			const context = createEngineContext();
-			const plan = [createPlanItem('notes/one.md')];
+			const plan = createPlan([createPlanItem('notes/one.md')]);
 			context.planner.buildPlan.mockResolvedValueOnce(plan);
 
 			await context.engine.sync();
@@ -271,12 +264,12 @@ describe('SyncEngine', () => {
 
 		it('passes the planner output directly to executor.execute', async () => {
 			const context = createEngineContext();
-			const plan = [createPlanItem('notes/one.md', 'upload'), createPlanItem('notes/two.md', 'download')];
-			context.planner.buildPlan.mockResolvedValueOnce(plan);
+			const items = [createPlanItem('notes/one.md', 'upload'), createPlanItem('notes/two.md', 'download')];
+			context.planner.buildPlan.mockResolvedValueOnce(createPlan(items));
 
 			await context.engine.sync();
 
-			expect(context.executor.execute).toHaveBeenCalledWith(plan);
+			expect(context.executor.execute).toHaveBeenCalledWith(items);
 		});
 	});
 
@@ -366,13 +359,13 @@ describe('SyncEngine', () => {
 
 		it('rejects settings updates while sync is in progress', async () => {
 			const context = createEngineContext();
-			const planDeferred = createDeferred<SyncPlanItem[]>();
+			const planDeferred = createDeferred<SyncPlan>();
 			context.planner.buildPlan.mockReturnValueOnce(planDeferred.promise);
 
 			const syncPromise = context.engine.sync();
 			expect(() => context.engine.updateSettings(createSettings({ bucket: 'changed-bucket' })))
 				.toThrow('Cannot update sync settings while a sync is in progress.');
-			planDeferred.resolve([]);
+			planDeferred.resolve(createPlan());
 
 			const result = await syncPromise;
 
@@ -380,11 +373,45 @@ describe('SyncEngine', () => {
 			expect(context.executor.execute).toHaveBeenCalledTimes(1);
 		});
 
+		it('blocks the plan when changed synced files exceed the protection threshold', async () => {
+			const context = createEngineContext();
+			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+			context.planner.buildPlan.mockResolvedValueOnce(createPlan(
+				[createPlanItem('notes/one.md', 'upload'), createPlanItem('notes/two.md', 'upload')],
+				{ syncedFileCount: 2, changedSyncedFileCount: 2 },
+			));
+
+			const result = await context.engine.sync();
+
+			expect(result.success).toBe(false);
+			expect(result.errors[0]?.recoverable).toBe(false);
+			expect(result.errors[0]?.message).toContain('protection threshold');
+			expect(context.executor.execute).not.toHaveBeenCalled();
+			consoleErrorSpy.mockRestore();
+		});
+
+		it('does not block when only new files change and the synced set is untouched', async () => {
+			const context = createEngineContext();
+			context.planner.buildPlan.mockResolvedValueOnce(createPlan(
+				[
+					createPlanItem('notes/new-1.md', 'upload'),
+					createPlanItem('notes/new-2.md', 'upload'),
+					createPlanItem('notes/new-3.md', 'upload'),
+				],
+				{ syncedFileCount: 4, changedSyncedFileCount: 0 },
+			));
+
+			const result = await context.engine.sync();
+
+			expect(result.success).toBe(true);
+			expect(context.executor.execute).toHaveBeenCalledTimes(1);
+		});
+
 		it('blocks delete-local plans when there is no prior successful sync', async () => {
 			const context = createEngineContext();
-			context.planner.buildPlan.mockResolvedValueOnce([
+			context.planner.buildPlan.mockResolvedValueOnce(createPlan([
 				createPlanItem('notes/one.md', 'delete-local'),
-			]);
+			]));
 			context.journal.getMetadata.mockImplementation(async (key: string) => {
 				if (key === 'destinationFingerprint') {
 					return JSON.stringify({ bucket: context.settings.bucket, region: context.settings.region });
@@ -460,8 +487,8 @@ describe('SyncEngine', () => {
 	});
 
 	/**
-	 * Covers SyncEngine's runtime configuration updates, verifying the path codec,
-	 * planner settings, and executor debug flag all reflect the latest settings snapshot.
+	 * Covers SyncEngine's runtime configuration updates, verifying future planner
+	 * and executor instances reflect the latest settings snapshot.
 	 */
 	describe('updateSettings', () => {
 		it('propagates updated settings to future planner and executor instances', async () => {
@@ -478,14 +505,12 @@ describe('SyncEngine', () => {
 				context.app,
 				context.s3Provider,
 				context.journal,
-				context.pathCodec,
 				updatedSettings,
 			);
 			expect(mockedSyncExecutor).toHaveBeenLastCalledWith(
 				context.app,
 				context.s3Provider,
 				context.journal,
-				context.pathCodec,
 			);
 		});
 
@@ -501,6 +526,33 @@ describe('SyncEngine', () => {
 				expect(context.journal.resetForDestination).toHaveBeenCalledWith(
 					JSON.stringify({ bucket: 'vault-b', region: 'us-west-2' }),
 				);
+			});
+
+			it('refuses to reset the journal while a sync is in progress', async () => {
+				const context = createEngineContext();
+				const plannerDeferred = createDeferred<SyncPlan>();
+				context.planner.buildPlan.mockReturnValueOnce(plannerDeferred.promise);
+
+				const syncPromise = context.engine.sync();
+				await expect(context.engine.resetJournalForCurrentDestination())
+					.rejects.toThrow('Cannot reset the sync journal while a sync is in progress.');
+				expect(context.journal.resetForDestination).not.toHaveBeenCalled();
+
+				plannerDeferred.resolve(createPlan());
+				await syncPromise;
+			});
+
+			it('reports in-progress while a reset is running', async () => {
+				const context = createEngineContext();
+				const resetDeferred = createDeferred<void>();
+				context.journal.resetForDestination.mockReturnValueOnce(resetDeferred.promise);
+
+				const resetPromise = context.engine.resetJournalForCurrentDestination();
+				expect(context.engine.isInProgress()).toBe(true);
+
+				resetDeferred.resolve(undefined);
+				await resetPromise;
+				expect(context.engine.isInProgress()).toBe(false);
 			});
 		});
 	});

@@ -8,9 +8,6 @@ function input(overrides: Partial<DecisionInput> = {}): DecisionInput {
 		remote: 'R=',
 		hasUnresolvedConflict: false,
 		hasConflictArtifacts: false,
-		localExists: true,
-		remoteExists: true,
-		hasBaseline: true,
 		...overrides,
 	};
 }
@@ -25,62 +22,45 @@ describe('SyncDecisionTable', () => {
 			const result = decide(input({
 				hasUnresolvedConflict: true,
 				hasConflictArtifacts: true,
-				localExists: true,
 			}));
 			expectAction(result, 'skip');
-			expect(result.reason).toContain('artifacts still present');
 		});
 
 		it('uploads when conflict resolved and local exists', () => {
 			const result = decide(input({
 				hasUnresolvedConflict: true,
 				hasConflictArtifacts: false,
-				localExists: true,
+				local: 'L=',
 			}));
 			expectAction(result, 'upload');
-			expect(result.reason).toContain('resolved');
 		});
 
-		it('deletes remote when conflict resolved, local absent, remote exists', () => {
+		it('restores remote when conflict resolved, local absent, remote exists', () => {
 			const result = decide(input({
 				hasUnresolvedConflict: true,
 				hasConflictArtifacts: false,
-				localExists: false,
-				remoteExists: true,
+				local: 'L0',
+				remote: 'R=',
 			}));
-			expectAction(result, 'delete-remote');
+			expectAction(result, 'download');
 		});
 
 		it('forgets when conflict resolved and both sides absent', () => {
 			const result = decide(input({
 				hasUnresolvedConflict: true,
 				hasConflictArtifacts: false,
-				localExists: false,
-				remoteExists: false,
+				local: 'L0',
+				remote: 'R0',
 			}));
 			expectAction(result, 'forget');
 		});
 	});
 
 	describe('no baseline (first sync)', () => {
-		it('skips L0/R0 without baseline', () => {
-			const result = decide(input({
-				local: 'L0',
-				remote: 'R0',
-				hasBaseline: false,
-				localExists: false,
-				remoteExists: false,
-			}));
-			expectAction(result, 'skip');
-		});
-
 		it('uploads L+/R0', () => {
 			const result = decide(input({
 				local: 'L+',
 				remote: 'R0',
-				hasBaseline: false,
-				localExists: true,
-				remoteExists: false,
 			}));
 			expectAction(result, 'upload');
 		});
@@ -89,9 +69,6 @@ describe('SyncDecisionTable', () => {
 			const result = decide(input({
 				local: 'L0',
 				remote: 'R+',
-				hasBaseline: false,
-				localExists: false,
-				remoteExists: true,
 			}));
 			expectAction(result, 'download');
 		});
@@ -100,9 +77,6 @@ describe('SyncDecisionTable', () => {
 			const result = decide(input({
 				local: 'L+',
 				remote: 'R+',
-				hasBaseline: false,
-				localExists: true,
-				remoteExists: true,
 				localFingerprint: 'sha256:abc',
 				remoteFingerprint: 'sha256:abc',
 			}));
@@ -113,9 +87,6 @@ describe('SyncDecisionTable', () => {
 			const result = decide(input({
 				local: 'L+',
 				remote: 'R+',
-				hasBaseline: false,
-				localExists: true,
-				remoteExists: true,
 				localFingerprint: 'sha256:abc',
 				remoteFingerprint: 'sha256:def',
 			}));
@@ -127,54 +98,39 @@ describe('SyncDecisionTable', () => {
 			const result = decide(input({
 				local: 'L+',
 				remote: 'R+',
-				hasBaseline: false,
-				localExists: true,
-				remoteExists: true,
 			}));
 			expectAction(result, 'conflict');
 			expect(result.conflictMode).toBe('both');
 		});
 
-		it('skips L+/R= without baseline (inconsistent state fallthrough)', () => {
+		it('skips L+/R= (inconsistent state fallthrough)', () => {
 			const result = decide(input({
 				local: 'L+',
 				remote: 'R=',
-				hasBaseline: false,
-				localExists: true,
-				remoteExists: true,
 			}));
 			expectAction(result, 'skip');
 		});
 
-		it('skips L+/RΔ without baseline (inconsistent state fallthrough)', () => {
+		it('skips L+/RΔ (inconsistent state fallthrough)', () => {
 			const result = decide(input({
 				local: 'L+',
 				remote: 'RΔ',
-				hasBaseline: false,
-				localExists: true,
-				remoteExists: true,
 			}));
 			expectAction(result, 'skip');
 		});
 
-		it('skips L=/R+ without baseline (inconsistent state fallthrough)', () => {
+		it('skips L=/R+ (inconsistent state fallthrough)', () => {
 			const result = decide(input({
 				local: 'L=',
 				remote: 'R+',
-				hasBaseline: false,
-				localExists: true,
-				remoteExists: true,
 			}));
 			expectAction(result, 'skip');
 		});
 
-		it('skips LΔ/R+ without baseline (inconsistent state fallthrough)', () => {
+		it('skips LΔ/R+ (inconsistent state fallthrough)', () => {
 			const result = decide(input({
 				local: 'LΔ',
 				remote: 'R+',
-				hasBaseline: false,
-				localExists: true,
-				remoteExists: true,
 			}));
 			expectAction(result, 'skip');
 		});
@@ -236,7 +192,6 @@ describe('SyncDecisionTable', () => {
 			expectAction(decide(input({
 				local: 'L0',
 				remote: 'R=',
-				localExists: false,
 			})), 'delete-remote');
 		});
 
@@ -244,7 +199,6 @@ describe('SyncDecisionTable', () => {
 			expectAction(decide(input({
 				local: 'L=',
 				remote: 'R0',
-				remoteExists: false,
 			})), 'delete-local');
 		});
 
@@ -252,8 +206,6 @@ describe('SyncDecisionTable', () => {
 			expectAction(decide(input({
 				local: 'L0',
 				remote: 'R0',
-				localExists: false,
-				remoteExists: false,
 			})), 'forget');
 		});
 
@@ -261,7 +213,6 @@ describe('SyncDecisionTable', () => {
 			const result = decide(input({
 				local: 'LΔ',
 				remote: 'R0',
-				remoteExists: false,
 			}));
 			expectAction(result, 'conflict');
 			expect(result.conflictMode).toBe('local-only');
@@ -271,7 +222,6 @@ describe('SyncDecisionTable', () => {
 			const result = decide(input({
 				local: 'L0',
 				remote: 'RΔ',
-				localExists: false,
 			}));
 			expectAction(result, 'conflict');
 			expect(result.conflictMode).toBe('remote-only');
@@ -279,10 +229,9 @@ describe('SyncDecisionTable', () => {
 	});
 
 	describe('plan item structure', () => {
-		it('always includes path and reason', () => {
+		it('always includes the path', () => {
 			const result = decide(input({ local: 'L=', remote: 'R=' }));
 			expect(result.path).toBe('test.md');
-			expect(result.reason).toBeTruthy();
 		});
 
 		it('includes conflictMode only for conflict actions', () => {
@@ -304,8 +253,8 @@ describe('SyncDecisionTable', () => {
 			const result = decide(input({
 				hasUnresolvedConflict: true,
 				hasConflictArtifacts: true,
-				localExists: false,
-				remoteExists: false,
+				local: 'L0',
+				remote: 'R0',
 			}));
 			expectAction(result, 'skip');
 		});

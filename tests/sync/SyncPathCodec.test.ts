@@ -1,42 +1,51 @@
-import { SyncPathCodec } from '../../src/sync/SyncPathCodec';
+import { isMetadataKey, localToRemote, remoteToLocal } from '../../src/sync/SyncPathCodec';
 
 describe('SyncPathCodec', () => {
 	const metadataDir = '.obsidian-s3-sync';
 
 	describe('localToRemote', () => {
-		it('normalizes local paths as bucket-root remote keys', () => {
-			const codec = new SyncPathCodec();
-
-			expect(codec.localToRemote('/Notes\\daily.md')).toBe('Notes/daily.md');
+		it('uses vault paths directly as bucket-root remote keys', () => {
+			expect(localToRemote('Notes/daily.md')).toBe('Notes/daily.md');
 		});
 	});
 
 	describe('remoteToLocal', () => {
-		it('normalizes remote keys as local paths', () => {
-			const codec = new SyncPathCodec();
+		it('round-trips safe keys unchanged', () => {
+			expect(remoteToLocal('Notes/daily.md')).toBe('Notes/daily.md');
+			expect(localToRemote(remoteToLocal('Notes/daily.md')!)).toBe('Notes/daily.md');
+		});
 
-			expect(codec.remoteToLocal('Notes\\daily.md')).toBe('Notes/daily.md');
+		it('rejects keys containing backslashes', () => {
+			expect(remoteToLocal('Notes\\daily.md')).toBeNull();
+		});
+
+		it('rejects keys with leading slashes or empty segments', () => {
+			expect(remoteToLocal('/Notes/daily.md')).toBeNull();
+			expect(remoteToLocal('Notes//daily.md')).toBeNull();
+		});
+
+		it('rejects keys with traversal segments', () => {
+			expect(remoteToLocal('../escape.md')).toBeNull();
+			expect(remoteToLocal('Notes/../escape.md')).toBeNull();
+			expect(remoteToLocal('Notes/./daily.md')).toBeNull();
+		});
+
+		it('keeps dot-prefixed but non-traversal segments', () => {
+			expect(remoteToLocal('.obsidian/app.json')).toBe('.obsidian/app.json');
 		});
 	});
 
 	describe('isMetadataKey', () => {
 		it('returns true for metadata files', () => {
-			const codec = new SyncPathCodec();
-
-			expect(codec.isMetadataKey(`${metadataDir}/engine.json`)).toBe(true);
+			expect(isMetadataKey(`${metadataDir}/engine.json`)).toBe(true);
 		});
 
 		it('returns false for non-metadata files', () => {
-			const codec = new SyncPathCodec();
-
-			expect(codec.isMetadataKey('Notes/daily.md')).toBe(false);
+			expect(isMetadataKey('Notes/daily.md')).toBe(false);
 		});
 
 		it('returns false for the metadata directory root itself', () => {
-			const codec = new SyncPathCodec();
-
-			expect(codec.isMetadataKey(metadataDir)).toBe(false);
+			expect(isMetadataKey(metadataDir)).toBe(false);
 		});
 	});
-
 });

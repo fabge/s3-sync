@@ -4,7 +4,6 @@ import { App } from 'obsidian';
 import { cloneSettings, S3SyncSettings, SyncPlanItem, SyncResult } from '../types';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
-import { SyncPathCodec } from './SyncPathCodec';
 import { SyncPlanner } from './SyncPlanner';
 import { SyncExecutor } from './SyncExecutor';
 import { computeDestinationFingerprint } from './DestinationFingerprint';
@@ -25,19 +24,10 @@ export class SyncEngine {
 	private isSyncing = false;
 	private settings: S3SyncSettings;
 
-	private static readonly PROTECT_ACTIONS = new Set<SyncPlanItem['action']>([
-		'upload',
-		'download',
-		'delete-local',
-		'delete-remote',
-		'conflict',
-	]);
-
 	constructor(
 		private app: App,
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
-		private pathCodec: SyncPathCodec,
 		settings: S3SyncSettings,
 	) {
 		this.settings = cloneSettings(settings);
@@ -77,16 +67,9 @@ export class SyncEngine {
 				this.app,
 				this.s3Provider,
 				this.journal,
-				this.pathCodec,
 				this.settings,
 			);
-			const syncedFileCount = await planner.countSyncedFiles();
-			const plan = await planner.buildPlan();
-			if (computeDestinationFingerprint(this.settings) !== startFingerprint) {
-				return this.buildBlockedResult(
-					'Aborted: destination changed during sync. The pending sync was discarded; run sync again after saving the new bucket or region.',
-				);
-			}
+			const { items: plan, syncedFileCount, changedSyncedFileCount } = await planner.buildPlan();
 			if (storedDestinationFingerprint === undefined) {
 				await withJournalContext(
 					'recording destination fingerprint',
@@ -97,13 +80,15 @@ export class SyncEngine {
 			if (destructivePlanError) {
 				return this.buildBlockedResult(destructivePlanError, 'delete-local');
 			}
-			this.assertProtectModifyThreshold(plan, syncedFileCount);
+			const protectError = this.checkProtectModifyThreshold(syncedFileCount, changedSyncedFileCount);
+			if (protectError) {
+				return this.buildBlockedResult(protectError);
+			}
 
 			const executor = new SyncExecutor(
 				this.app,
 				this.s3Provider,
 				this.journal,
-				this.pathCodec,
 			);
 			const result = await executor.execute(plan);
 
@@ -132,32 +117,38 @@ export class SyncEngine {
 	}
 
 	async resetJournalForCurrentDestination(): Promise<void> {
-		const fingerprint = computeDestinationFingerprint(this.settings);
-		await withJournalContext(
-			'resetting sync journal for the current destination',
-			() => this.journal.resetForDestination(fingerprint),
-		);
+		if (this.isSyncing) {
+			throw new Error('Cannot reset the sync journal while a sync is in progress.');
+		}
+
+		// Hold the busy flag so a scheduled sync cannot start mid-reset.
+		this.isSyncing = true;
+		try {
+			const fingerprint = computeDestinationFingerprint(this.settings);
+			await withJournalContext(
+				'resetting sync journal for the current destination',
+				() => this.journal.resetForDestination(fingerprint),
+			);
+		} finally {
+			this.isSyncing = false;
+		}
 	}
 
-	private assertProtectModifyThreshold(
-		plan: SyncPlanItem[],
+	private checkProtectModifyThreshold(
 		syncedFileCount: number,
-	): void {
+		changedSyncedFileCount: number,
+	): string | null {
 		const threshold = this.settings.protectModifyPercentage;
 		if (threshold >= 100 || syncedFileCount <= 0) {
-			return;
+			return null;
 		}
 
-		const riskyActionCount = plan.filter((item) =>
-			SyncEngine.PROTECT_ACTIONS.has(item.action),
-		).length;
-		const riskyPercentage = (riskyActionCount / syncedFileCount) * 100;
-
-		if (riskyPercentage > threshold) {
-			throw new Error(
-				`Aborting sync: ${riskyActionCount} of ${syncedFileCount} synced files would change (${riskyPercentage.toFixed(1)}%), exceeding the ${threshold}% protection threshold.`,
-			);
+		const changedPercentage = (changedSyncedFileCount / syncedFileCount) * 100;
+		if (changedPercentage <= threshold) {
+			return null;
 		}
+
+		return `Aborting sync: ${changedSyncedFileCount} of ${syncedFileCount} synced files would change (${changedPercentage.toFixed(1)}%), exceeding the ${threshold}% protection threshold.`;
 	}
 
 	/** Stale-journal / wrong-bucket protection. First successful listing records the destination. */

@@ -31,12 +31,9 @@ export class SyncScheduler {
         this.onSyncError = callbacks.onSyncError;
     }
 
+    /** Only stores the settings; main restarts the scheduler on settings changes. */
     updateSettings(settings: S3SyncSettings): void {
         this.settings = cloneSettings(settings);
-        if (this.isEnabled && this.settings.autoSyncEnabled) {
-            this.stop();
-            this.start();
-        }
     }
 
     start(): void {

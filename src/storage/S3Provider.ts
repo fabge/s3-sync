@@ -141,62 +141,15 @@ export class S3Provider {
         }
     }
 
-    /** Normalize AWS SDK response bodies across Obsidian/Electron and tests. */
+    /** ObsidianHttpHandler produces ReadableStream bodies, or Blob where streams are unavailable. */
     private async bodyToUint8Array(body: unknown, key: string): Promise<Uint8Array> {
-        const responseBody = body as
-            | Uint8Array
-            | ArrayBuffer
-            | Blob
-            | ReadableStream<Uint8Array>
-            | { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }
-            | { transformToByteArray?: () => Promise<Uint8Array> }
-            | string;
-        type ByteArrayTransformable = { transformToByteArray: () => Promise<Uint8Array> };
-
-        if (responseBody instanceof Uint8Array) {
-            return responseBody;
+        if (body instanceof Blob) {
+            return new Uint8Array(await body.arrayBuffer());
         }
-        if (responseBody instanceof ArrayBuffer) {
-            return new Uint8Array(responseBody);
+        if (typeof ReadableStream === 'function' && body instanceof ReadableStream) {
+            return new Uint8Array(await new Response(body as ReadableStream<Uint8Array>).arrayBuffer());
         }
-        if (typeof responseBody === 'string') {
-            return new TextEncoder().encode(responseBody);
-        }
-        if (typeof responseBody === 'object' && responseBody !== null && 'transformToByteArray' in responseBody) {
-            const transformableBody = responseBody as ByteArrayTransformable;
-            if (typeof transformableBody.transformToByteArray === 'function') {
-                return await transformableBody.transformToByteArray();
-            }
-        }
-        if (responseBody instanceof Blob) {
-            return new Uint8Array(await responseBody.arrayBuffer());
-        }
-
-        const chunks: Uint8Array[] = [];
-
-        if (typeof responseBody === 'object' && responseBody !== null && 'getReader' in responseBody && typeof responseBody.getReader === 'function') {
-            const reader = responseBody.getReader();
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                if (value) chunks.push(value);
-            }
-        } else if (typeof responseBody === 'object' && responseBody !== null && Symbol.asyncIterator in responseBody) {
-            for await (const chunk of responseBody as { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }) {
-                chunks.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
-            }
-        } else {
-            throw new Error(`Unsupported response body type for key: ${key}`);
-        }
-
-        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of chunks) {
-            result.set(chunk, offset);
-            offset += chunk.length;
-        }
-        return result;
+        throw new Error(`Unsupported response body type for key: ${key}`);
     }
 
     async headObject(key: string): Promise<S3HeadResult | null> {
@@ -228,36 +181,35 @@ export class S3Provider {
     }
 
     /** Upload with optional conditional headers; ETag quotes are re-added for S3. */
-	async uploadFile(
-		key: string,
-		content: Uint8Array | string,
-		options?: { contentType?: string; ifMatch?: string; ifNoneMatch?: string; metadata?: Record<string, string> }
-	): Promise<string> {
-        const body = typeof content === 'string' ? new TextEncoder().encode(content) : content;
+    async uploadFile(
+        key: string,
+        content: Uint8Array,
+        options?: { contentType?: string; ifMatch?: string; ifNoneMatch?: string; metadata?: Record<string, string> }
+    ): Promise<string> {
         const settings = this.settings;
 
         const response = await this.getClient().send(new PutObjectCommand({
             Bucket: settings.bucket,
             Key: key,
-            Body: body,
+            Body: content,
             ContentType: options?.contentType,
             IfMatch: this.toConditionalEntityTag(options?.ifMatch),
             IfNoneMatch: this.toConditionalEntityTag(options?.ifNoneMatch),
             Metadata: options?.metadata,
         }));
 
-		return normalizeEntityTag(response.ETag);
-	}
+        return normalizeEntityTag(response.ETag);
+    }
 
-	private toConditionalEntityTag(etag?: string): string | undefined {
-		if (!etag) {
-			return undefined;
-		}
-		if (etag === '*') {
-			return etag;
-		}
-		return `"${normalizeEntityTag(etag)}"`;
-	}
+    private toConditionalEntityTag(etag?: string): string | undefined {
+        if (!etag) {
+            return undefined;
+        }
+        if (etag === '*') {
+            return etag;
+        }
+        return `"${normalizeEntityTag(etag)}"`;
+    }
 
     async deleteFile(key: string, ifMatch?: string): Promise<void> {
         const settings = this.settings;
@@ -274,8 +226,4 @@ export class S3Provider {
             this.client = null;
         }
     }
-}
-
-interface AsyncIteratorLike<T> {
-    next(): Promise<IteratorResult<T>>;
 }

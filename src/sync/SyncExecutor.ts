@@ -13,7 +13,7 @@ import { getVaultFileKind, readVaultFile, toArrayBuffer } from '../utils/vaultFi
 import { fingerprint } from '../utils/fingerprint';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
-import { SyncPathCodec } from './SyncPathCodec';
+import { localToRemote } from './SyncPathCodec';
 
 // 4 hides S3 round-trip latency while staying within typical browser
 // connection-pool limits (~6/host) and avoiding large-binary memory spikes.
@@ -28,7 +28,6 @@ export class SyncExecutor {
 		private app: App,
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
-		private pathCodec: SyncPathCodec,
 	) {}
 
 	async execute(plan: SyncPlanItem[]): Promise<SyncResult> {
@@ -114,13 +113,18 @@ export class SyncExecutor {
 		}
 	}
 
+	/** Adopt records "both sides identical" — re-verify neither side moved since planning. */
 	private async executeAdopt(item: SyncPlanItem): Promise<void> {
-		const remoteKey = this.pathCodec.localToRemote(item.path);
+		const remoteKey = localToRemote(item.path);
 		const head = await this.s3Provider.headObject(remoteKey);
 		if (!head) {
 			throw new Error(`Remote file disappeared during adopt: ${item.path}`);
 		}
+		if (item.expectedRemoteEtag !== undefined && head.etag !== item.expectedRemoteEtag) {
+			throw new Error(`Remote file ${item.path} changed since planning. Skipping adopt.`);
+		}
 
+		this.assertLocalUnchanged(item, 'adopt');
 		const localFile = this.app.vault.getAbstractFileByPath(item.path);
 		if (!(localFile instanceof TFile)) {
 			throw new Error(`Local file disappeared during adopt: ${item.path}`);
@@ -153,10 +157,9 @@ export class SyncExecutor {
 		const localSize = file.stat.size;
 		const content = await readVaultFile(this.app.vault, file);
 		const contentFingerprint = await fingerprint(content);
-		const payload = typeof content === 'string' ? new TextEncoder().encode(content) : content;
-		const remoteKey = this.pathCodec.localToRemote(item.path);
+		const remoteKey = localToRemote(item.path);
 
-		const etag = await this.s3Provider.uploadFile(remoteKey, payload, {
+		const etag = await this.s3Provider.uploadFile(remoteKey, content, {
 			contentType: this.guessContentType(item.path),
 			ifMatch: item.expectRemoteAbsent ? undefined : item.expectedRemoteEtag,
 			ifNoneMatch: item.expectRemoteAbsent ? '*' : undefined,
@@ -184,17 +187,14 @@ export class SyncExecutor {
 
 	/** The sleep(0) lets Obsidian's file indexer observe the written file. */
 	private async executeDownload(item: SyncPlanItem): Promise<void> {
-		const remoteKey = this.pathCodec.localToRemote(item.path);
+		const remoteKey = localToRemote(item.path);
 		const downloaded = await this.s3Provider.downloadFileWithMetadata(remoteKey);
 		if (!downloaded) {
 			throw new Error(`Remote file disappeared during sync: ${item.path}`);
 		}
 
-		const kind = getVaultFileKind(item.path);
-		const content = kind === 'text' ? new TextDecoder().decode(downloaded.content) : downloaded.content;
-
 		this.assertLocalUnchanged(item, 'download');
-		await this.writeLocalFile(item.path, content);
+		await this.writeLocalFile(item.path, downloaded.content);
 		await new Promise((resolve) => window.setTimeout(resolve, 0));
 
 		const localFile = this.app.vault.getAbstractFileByPath(item.path);
@@ -204,7 +204,7 @@ export class SyncExecutor {
 
 		const record: SyncStateRecord = {
 			path: item.path,
-			contentFingerprint: await fingerprint(content),
+			contentFingerprint: await fingerprint(downloaded.content),
 			localMtime: localFile.stat.mtime,
 			localSize: localFile.stat.size,
 			remoteEtag: downloaded.etag,
@@ -227,7 +227,7 @@ export class SyncExecutor {
 
 	/** Abort remote deletes when the planned ETag no longer matches. */
 	private async executeDeleteRemote(item: SyncPlanItem): Promise<void> {
-		const remoteKey = this.pathCodec.localToRemote(item.path);
+		const remoteKey = localToRemote(item.path);
 
 		await this.s3Provider.deleteFile(remoteKey, item.expectedRemoteEtag);
 		await this.journal.deleteStateRecord(item.path);
@@ -242,33 +242,37 @@ export class SyncExecutor {
 		const localArtifactPath = dir ? `${dir}/LOCAL_${fileName}` : `LOCAL_${fileName}`;
 		const remoteArtifactPath = dir ? `${dir}/REMOTE_${fileName}` : `REMOTE_${fileName}`;
 
+		let originalFile: TFile | null = null;
 		if (mode === 'both' || mode === 'local-only') {
 			this.assertLocalUnchanged(item, 'conflict');
 			const file = this.app.vault.getAbstractFileByPath(item.path);
 			if (!(file instanceof TFile)) {
 				throw new Error(`File not found for conflict: ${item.path}`);
 			}
-			await this.app.vault.rename(file, localArtifactPath);
+			originalFile = file;
 		}
 
 		if (mode === 'both' || mode === 'remote-only') {
-			const remoteKey = this.pathCodec.localToRemote(item.path);
+			const remoteKey = localToRemote(item.path);
 			const downloaded = await this.s3Provider.downloadFileWithMetadata(remoteKey);
 			if (downloaded) {
-				const kind = getVaultFileKind(item.path);
-				await this.writeLocalFile(
-					remoteArtifactPath,
-					kind === 'text' ? new TextDecoder().decode(downloaded.content) : downloaded.content,
-				);
+				await this.writeLocalFile(remoteArtifactPath, downloaded.content);
 			}
 		}
 
+		// Persist the record before displacing the original: a crash after the
+		// rename but before the record would leave artifacts the next sync
+		// treats as ordinary files.
 		await this.journal.setConflict({
 			path: item.path,
 			mode,
-			localArtifactPath: (mode === 'both' || mode === 'local-only') ? localArtifactPath : undefined,
+			localArtifactPath: originalFile ? localArtifactPath : undefined,
 			remoteArtifactPath: (mode === 'both' || mode === 'remote-only') ? remoteArtifactPath : undefined,
 		});
+
+		if (originalFile) {
+			await this.app.vault.rename(originalFile, localArtifactPath);
+		}
 	}
 
 	private async executeForget(item: SyncPlanItem): Promise<void> {
@@ -276,23 +280,15 @@ export class SyncExecutor {
 		await this.journal.deleteConflict(item.path);
 	}
 
-	private async writeLocalFile(path: string, content: string | Uint8Array): Promise<void> {
+	private async writeLocalFile(path: string, content: Uint8Array): Promise<void> {
 		const existingFile = this.app.vault.getAbstractFileByPath(path);
 		if (existingFile instanceof TFile) {
-			if (typeof content === 'string') {
-				await this.app.vault.modify(existingFile, content);
-			} else {
-				await this.app.vault.modifyBinary(existingFile, toArrayBuffer(content));
-			}
+			await this.app.vault.modifyBinary(existingFile, toArrayBuffer(content));
 			return;
 		}
 
 		await this.ensureParentFolders(path);
-		if (typeof content === 'string') {
-			await this.app.vault.create(path, content);
-		} else {
-			await this.app.vault.createBinary(path, toArrayBuffer(content));
-		}
+		await this.app.vault.createBinary(path, toArrayBuffer(content));
 	}
 
 	private async ensureParentFolders(path: string): Promise<void> {

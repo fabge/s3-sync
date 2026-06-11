@@ -28,7 +28,7 @@ describe('S3Provider', () => {
 		const send = jest.fn().mockResolvedValue({ ETag: '"returned-etag"' });
 		(provider as unknown as { client: { send: typeof send } }).client = { send };
 
-		const etag = await provider.uploadFile('vault/test.md', 'hello', {
+		const etag = await provider.uploadFile('vault/test.md', new TextEncoder().encode('hello'), {
 			ifMatch: 'abc123',
 			ifNoneMatch: '*',
 		});
@@ -45,7 +45,7 @@ describe('S3Provider', () => {
 		const send = jest.fn().mockResolvedValue({ ETag: '"returned-etag"' });
 		(provider as unknown as { client: { send: typeof send } }).client = { send };
 
-		await provider.uploadFile('vault/test.md', 'hello', {
+		await provider.uploadFile('vault/test.md', new TextEncoder().encode('hello'), {
 			ifMatch: '"abc123"',
 		});
 
@@ -58,7 +58,7 @@ describe('S3Provider', () => {
 		const send = jest.fn().mockResolvedValue({ ETag: 'W/"returned-etag"' });
 		(provider as unknown as { client: { send: typeof send } }).client = { send };
 
-		const etag = await provider.uploadFile('vault/test.md', 'hello', {
+		const etag = await provider.uploadFile('vault/test.md', new TextEncoder().encode('hello'), {
 			ifMatch: 'W/"abc123"',
 		});
 

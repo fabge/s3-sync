@@ -27,7 +27,6 @@ export class StatusBar {
 		status: 'disabled',
 		lastSyncTime: null,
 		conflictCount: 0,
-		isSyncing: false,
 		lastError: null,
 	};
 

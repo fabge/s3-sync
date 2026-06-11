@@ -4,7 +4,6 @@ import { S3SyncSettingTab } from './settings';
 import { StatusBar } from './statusbar';
 import { S3Provider } from './storage/S3Provider';
 import { SyncJournal } from './sync/SyncJournal';
-import { SyncPathCodec } from './sync/SyncPathCodec';
 import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
 import { registerPluginCommands } from './commands';
@@ -20,7 +19,6 @@ export default class S3SyncPlugin extends Plugin {
 	private s3Provider: S3Provider | null = null;
 	private statusBar: StatusBar | null = null;
 	private syncJournal: SyncJournal | null = null;
-	private pathCodec: SyncPathCodec | null = null;
 	private syncEngine: SyncEngine | null = null;
 	private syncScheduler: SyncScheduler | null = null;
 
@@ -37,13 +35,10 @@ export default class S3SyncPlugin extends Plugin {
 		this.syncJournal = new SyncJournal(this.journalId);
 		await this.syncJournal.initialize();
 
-		this.pathCodec = new SyncPathCodec();
-
 		this.syncEngine = new SyncEngine(
 			this.app,
 			this.s3Provider,
 			this.syncJournal,
-			this.pathCodec,
 			this.settings,
 		);
 
@@ -52,7 +47,6 @@ export default class S3SyncPlugin extends Plugin {
 			onSyncStart: () => {
 				this.statusBar?.updateSyncState({
 					status: 'syncing',
-					isSyncing: true,
 					lastError: null,
 				});
 			},
@@ -66,7 +60,6 @@ export default class S3SyncPlugin extends Plugin {
 				this.statusBar?.updateSyncState({
 					status,
 					lastSyncTime: result.completedAt,
-					isSyncing: false,
 					conflictCount: result.conflicts.length,
 					lastError: result.errors[0]?.message ?? null,
 				});
@@ -79,7 +72,6 @@ export default class S3SyncPlugin extends Plugin {
 			onSyncError: (error) => {
 				this.statusBar?.updateSyncState({
 					status: 'error',
-					isSyncing: false,
 					lastError: error,
 				});
 			},
@@ -137,10 +129,12 @@ export default class S3SyncPlugin extends Plugin {
 			return;
 		}
 
-		await this.persistSettings();
+		// No awaits between the in-progress check and these updates — an await
+		// here would let a scheduled sync start against half-applied settings.
 		this.s3Provider?.updateSettings(this.settings);
 		this.syncEngine?.updateSettings(this.settings);
 		this.syncScheduler?.updateSettings(this.settings);
+		await this.persistSettings();
 	}
 
 	private async persistSettings(): Promise<void> {
@@ -165,7 +159,6 @@ export default class S3SyncPlugin extends Plugin {
 				status: 'disabled',
 				lastSyncTime: null,
 				conflictCount: 0,
-				isSyncing: false,
 				lastError: null,
 			});
 			return;
@@ -174,7 +167,6 @@ export default class S3SyncPlugin extends Plugin {
 		this.statusBar.updateSyncState({
 			status: 'idle',
 			conflictCount: 0,
-			isSyncing: false,
 			lastError: null,
 		});
 	}
@@ -232,10 +224,6 @@ export default class S3SyncPlugin extends Plugin {
 	async resetSyncJournal(): Promise<void> {
 		if (!this.syncEngine) {
 			throw new Error('Sync engine is not initialized yet.');
-		}
-
-		if (this.syncEngine.isInProgress()) {
-			throw new Error('Cannot reset the sync journal while a sync is in progress.');
 		}
 
 		await this.syncEngine.resetJournalForCurrentDestination();

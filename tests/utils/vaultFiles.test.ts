@@ -27,21 +27,9 @@ describe('vaultFiles', () => {
     });
 
     describe('readVaultFile', () => {
-        it('reads text files through vault.read', async () => {
+        it('reads every file as raw bytes through vault.readBinary', async () => {
             const vault = new Vault();
             const file = createFile('note.md');
-            const readSpy = jest.spyOn(vault, 'read').mockResolvedValue('hello world');
-            const binarySpy = jest.spyOn(vault, 'readBinary');
-
-            await expect(readVaultFile(vault, file)).resolves.toBe('hello world');
-
-            expect(readSpy).toHaveBeenCalledWith(file);
-            expect(binarySpy).not.toHaveBeenCalled();
-        });
-
-        it('reads binary files through vault.readBinary', async () => {
-            const vault = new Vault();
-            const file = createFile('image.png');
             const bytes = new Uint8Array([1, 2, 3, 4]);
             const readSpy = jest.spyOn(vault, 'read');
             const binarySpy = jest.spyOn(vault, 'readBinary').mockResolvedValue(bytes.buffer);
@@ -49,7 +37,7 @@ describe('vaultFiles', () => {
             const result = await readVaultFile(vault, file);
 
             expect(result).toBeInstanceOf(Uint8Array);
-            expect(Array.from(result as Uint8Array)).toEqual([1, 2, 3, 4]);
+            expect(Array.from(result)).toEqual([1, 2, 3, 4]);
             expect(readSpy).not.toHaveBeenCalled();
             expect(binarySpy).toHaveBeenCalledWith(file);
         });

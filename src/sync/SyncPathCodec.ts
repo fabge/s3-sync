@@ -3,16 +3,29 @@
 // Hidden dir (dot-prefixed) for plugin-internal objects; detected by isMetadataKey().
 const METADATA_DIR = '.obsidian-s3-sync';
 
-export class SyncPathCodec {
-	localToRemote(localPath: string): string {
-		return localPath.replace(/\\/g, '/').replace(/^\/+/, '');
+/** Vault paths are already normalized (forward slashes, no leading slash). */
+export function localToRemote(localPath: string): string {
+	return localPath;
+}
+
+/**
+ * Returns null for keys that cannot round-trip as safe vault paths
+ * (backslashes, empty segments, leading slashes, `.`/`..` traversal) —
+ * such foreign objects are left untouched.
+ */
+export function remoteToLocal(remoteKey: string): string | null {
+	if (remoteKey.includes('\\')) {
+		return null;
 	}
 
-	remoteToLocal(remoteKey: string): string {
-		return remoteKey.replace(/\\/g, '/');
+	const segments = remoteKey.split('/');
+	if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+		return null;
 	}
 
-	isMetadataKey(remoteKey: string): boolean {
-		return this.remoteToLocal(remoteKey).startsWith(`${METADATA_DIR}/`);
-	}
+	return remoteKey;
+}
+
+export function isMetadataKey(remoteKey: string): boolean {
+	return remoteKey.startsWith(`${METADATA_DIR}/`);
 }

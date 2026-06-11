@@ -17,7 +17,7 @@ import { matchesAnyGlob, getFilename, isPluginOwnPath } from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 import { fingerprint } from '../utils/fingerprint';
 import { SyncJournal } from './SyncJournal';
-import { SyncPathCodec } from './SyncPathCodec';
+import { isMetadataKey, localToRemote, remoteToLocal } from './SyncPathCodec';
 import { S3Provider } from '../storage/S3Provider';
 import { decide } from './SyncDecisionTable';
 
@@ -43,36 +43,38 @@ interface PathContext {
 	remoteFingerprint?: string;
 }
 
+export interface SyncPlan {
+	items: SyncPlanItem[];
+	/**
+	 * In-scope files with a journal baseline. Denominator for the
+	 * change-protection threshold so churn is measured against what's already
+	 * synced — a first sync (no baselines) skips the check, and bulk downloads
+	 * into a fresh vault aren't falsely blocked.
+	 */
+	syncedFileCount: number;
+	/** Baselined files the plan would change (uploads/downloads/deletes/conflicts). */
+	changedSyncedFileCount: number;
+}
+
 export class SyncPlanner {
 	constructor(
 		private app: App,
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
-		private pathCodec: SyncPathCodec,
 		private settings: S3SyncSettings,
 	) {}
 
-	/**
-	 * Size of the established sync set: in-scope files with a journal baseline.
-	 * Used as the denominator for the change-protection threshold so churn is
-	 * measured against what's already synced — a first sync (no baselines) skips
-	 * the check, and bulk downloads into a fresh vault aren't falsely blocked.
-	 */
-	async countSyncedFiles(): Promise<number> {
-		let count = 0;
-		for (const baseline of await this.journal.getAllStateRecords()) {
-			if (!this.shouldExclude(baseline.path)) {
-				count++;
-			}
-		}
-		return count;
-	}
-
-	async buildPlan(): Promise<SyncPlanItem[]> {
+	async buildPlan(): Promise<SyncPlan> {
 		const contexts = await this.discoverState();
-		const plan: SyncPlanItem[] = [];
+		const items: SyncPlanItem[] = [];
+		let syncedFileCount = 0;
+		let changedSyncedFileCount = 0;
 
 		for (const ctx of contexts.values()) {
+			if (ctx.baseline) {
+				syncedFileCount++;
+			}
+
 			const local = await this.classifyLocal(ctx);
 			const remote = await this.classifyRemote(ctx);
 
@@ -87,9 +89,6 @@ export class SyncPlanner {
 				remote,
 				hasUnresolvedConflict: ctx.conflict !== undefined,
 				hasConflictArtifacts: ctx.hasConflictArtifacts,
-				localExists: ctx.local !== undefined,
-				remoteExists: ctx.remote !== undefined,
-				hasBaseline: ctx.baseline !== undefined,
 				localFingerprint: ctx.localFingerprint,
 				remoteFingerprint: ctx.remoteFingerprint,
 			};
@@ -104,20 +103,28 @@ export class SyncPlanner {
 					item.expectRemoteAbsent = true;
 				}
 				this.attachLocalPreconditions(item, ctx);
-				plan.push(item);
+				if (ctx.baseline && item.action !== 'adopt' && item.action !== 'forget') {
+					changedSyncedFileCount++;
+				}
+				items.push(item);
 			}
 		}
 
-		return this.sortPlan(plan);
+		return {
+			items: this.sortPlan(items),
+			syncedFileCount,
+			changedSyncedFileCount,
+		};
 	}
 
 	private async discoverState(): Promise<Map<string, PathContext>> {
 		const contexts = new Map<string, PathContext>();
 		const conflictArtifacts = new Map<string, string>();
 
+		// Conflict records are processed even for excluded paths so they can
+		// still resolve (typically to a forget) instead of lingering forever,
+		// and so their artifacts are never treated as ordinary files.
 		for (const conflict of await this.journal.getAllConflicts()) {
-			if (this.shouldExclude(conflict.path)) continue;
-
 			this.getOrCreate(contexts, conflict.path).conflict = conflict;
 			if (conflict.localArtifactPath) {
 				conflictArtifacts.set(conflict.localArtifactPath, conflict.path);
@@ -142,9 +149,9 @@ export class SyncPlanner {
 
 		const remoteObjects = await this.s3Provider.listObjects();
 		for (const obj of remoteObjects) {
-			if (this.pathCodec.isMetadataKey(obj.key)) continue;
+			if (isMetadataKey(obj.key)) continue;
 
-			const localPath = this.pathCodec.remoteToLocal(obj.key);
+			const localPath = remoteToLocal(obj.key);
 			if (!localPath || this.shouldExclude(localPath)) continue;
 
 			const ctx = this.getOrCreate(contexts, localPath);
@@ -199,7 +206,7 @@ export class SyncPlanner {
 		if (ctx.remoteFingerprint) return;
 		if (!ctx.remote) return;
 
-		const remoteKey = this.pathCodec.localToRemote(ctx.path);
+		const remoteKey = localToRemote(ctx.path);
 
 		if (!ctx.remote.head) {
 			ctx.remote.head = (await this.s3Provider.headObject(remoteKey)) ?? undefined;
@@ -256,7 +263,8 @@ export class SyncPlanner {
 	}
 
 	private needsLocalPrecondition(item: SyncPlanItem): boolean {
-		return item.action === 'upload'
+		return item.action === 'adopt'
+			|| item.action === 'upload'
 			|| item.action === 'download'
 			|| item.action === 'delete-local'
 			|| item.action === 'conflict';

@@ -217,7 +217,6 @@ describe('SyncJournal', () => {
 			const stateRecord = createStateRecord();
 			const conflictRecord = createConflictRecord();
 
-			await expect(journal.getStateRecord('notes/example.md')).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.setStateRecord(stateRecord)).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.deleteStateRecord('notes/example.md')).rejects.toThrow(/SyncJournal not initialized/);
 			await expect(journal.getAllStateRecords()).rejects.toThrow(/SyncJournal not initialized/);
@@ -250,8 +249,6 @@ describe('SyncJournal', () => {
 
 			expect(db.put).toHaveBeenNthCalledWith(1, 'stateRecords', firstRecord);
 			expect(db.put).toHaveBeenNthCalledWith(2, 'stateRecords', secondRecord);
-			expect(await journal.getStateRecord(firstRecord.path)).toEqual(firstRecord);
-			expect(db.get).toHaveBeenCalledWith('stateRecords', firstRecord.path);
 			expect(await journal.getAllStateRecords()).toEqual([firstRecord, secondRecord]);
 			expect(db.getAll).toHaveBeenCalledWith('stateRecords');
 

@@ -23,8 +23,8 @@ export function decide(input: DecisionInput): SyncPlanItem {
 		return decideConflictMode(input);
 	}
 
-	const isFirstSync = input.local === 'L+' || input.remote === 'R+';
-	if (isFirstSync || !input.hasBaseline) {
+	// Without a baseline, whichever side exists classifies as new ('+').
+	if (input.local === 'L+' || input.remote === 'R+') {
 		return decideNoBaseline(input);
 	}
 
@@ -33,29 +33,32 @@ export function decide(input: DecisionInput): SyncPlanItem {
 
 /**
  * Mode 1 — unresolved conflict. While artifacts remain the user hasn't merged;
- * once they're gone, which side still exists decides the follow-up.
+ * once they're gone, which side still exists decides the follow-up. The plugin
+ * itself renames the original away while a conflict is open, so a missing
+ * original is never treated as intent to delete — the remote copy is restored
+ * instead, and the user can delete the restored file if that's what they meant.
  *
- * | Local original | Artifacts present | Action            |
- * |----------------|-------------------|-------------------|
- * | any            | yes               | skip              |
- * | exists         | no                | upload (resolved) |
- * | absent + R exists  | no            | delete-remote     |
- * | absent + R absent  | no            | forget            |
+ * | Local original | Artifacts present | Action             |
+ * |----------------|-------------------|--------------------|
+ * | any            | yes               | skip               |
+ * | exists         | no                | upload (resolved)  |
+ * | absent + R exists | no             | download (restore) |
+ * | absent + R absent | no             | forget             |
  */
 function decideConflictMode(input: DecisionInput): SyncPlanItem {
 	if (input.hasConflictArtifacts) {
-		return plan(input.path, 'skip', 'Unresolved conflict — artifacts still present');
+		return plan(input.path, 'skip');
 	}
 
-	if (input.localExists) {
-		return plan(input.path, 'upload', 'Conflict resolved — uploading local version');
+	if (input.local !== 'L0') {
+		return plan(input.path, 'upload');
 	}
 
-	if (input.remoteExists) {
-		return plan(input.path, 'delete-remote', 'Conflict resolved — local deleted, cleaning up remote');
+	if (input.remote !== 'R0') {
+		return plan(input.path, 'download');
 	}
 
-	return plan(input.path, 'forget', 'Conflict resolved — both sides absent, removing baseline');
+	return plan(input.path, 'forget');
 }
 
 /**
@@ -64,7 +67,6 @@ function decideConflictMode(input: DecisionInput): SyncPlanItem {
  *
  * | Local | Remote | Action                                    |
  * |-------|--------|-------------------------------------------|
- * | L0    | R0     | skip                                      |
  * | L+    | R0     | upload                                    |
  * | L0    | R+     | download                                  |
  * | L+    | R+     | adopt (same fingerprint) / conflict(both) |
@@ -72,26 +74,22 @@ function decideConflictMode(input: DecisionInput): SyncPlanItem {
 function decideNoBaseline(input: DecisionInput): SyncPlanItem {
 	const { local, remote, path } = input;
 
-	if (local === 'L0' && remote === 'R0') {
-		return plan(path, 'skip', 'Neither local nor remote exists');
-	}
-
 	if (local === 'L+' && remote === 'R0') {
-		return plan(path, 'upload', 'New local file — no remote counterpart');
+		return plan(path, 'upload');
 	}
 
 	if (local === 'L0' && remote === 'R+') {
-		return plan(path, 'download', 'New remote file — no local counterpart');
+		return plan(path, 'download');
 	}
 
 	if (local === 'L+' && remote === 'R+') {
 		if (fingerprintsMatch(input)) {
-			return plan(path, 'adopt', 'First sync — local and remote content identical');
+			return plan(path, 'adopt');
 		}
-		return planConflict(path, 'both', 'First sync — local and remote content differ');
+		return planConflict(path, 'both');
 	}
 
-	return plan(path, 'skip', 'No action needed');
+	return plan(path, 'skip');
 }
 
 /**
@@ -115,45 +113,45 @@ function decideWithBaseline(input: DecisionInput): SyncPlanItem {
 	const { local, remote, path } = input;
 
 	if (local === 'L=' && remote === 'R=') {
-		return plan(path, 'skip', 'Both sides match baseline');
+		return plan(path, 'skip');
 	}
 
 	if (local === 'LΔ' && remote === 'R=') {
-		return plan(path, 'upload', 'Local modified, remote unchanged');
+		return plan(path, 'upload');
 	}
 
 	if (local === 'L=' && remote === 'RΔ') {
-		return plan(path, 'download', 'Remote modified, local unchanged');
+		return plan(path, 'download');
 	}
 
 	if (local === 'LΔ' && remote === 'RΔ') {
 		if (fingerprintsMatch(input)) {
-			return plan(path, 'adopt', 'Both sides changed to identical content');
+			return plan(path, 'adopt');
 		}
-		return planConflict(path, 'both', 'Both sides modified with different content');
+		return planConflict(path, 'both');
 	}
 
 	if (local === 'L0' && remote === 'R=') {
-		return plan(path, 'delete-remote', 'Locally deleted, remote unchanged');
+		return plan(path, 'delete-remote');
 	}
 
 	if (local === 'L=' && remote === 'R0') {
-		return plan(path, 'delete-local', 'Remotely deleted, local unchanged');
+		return plan(path, 'delete-local');
 	}
 
 	if (local === 'L0' && remote === 'R0') {
-		return plan(path, 'forget', 'Both sides deleted — removing stale baseline');
+		return plan(path, 'forget');
 	}
 
 	if (local === 'LΔ' && remote === 'R0') {
-		return planConflict(path, 'local-only', 'Local modified but remote was deleted');
+		return planConflict(path, 'local-only');
 	}
 
 	if (local === 'L0' && remote === 'RΔ') {
-		return planConflict(path, 'remote-only', 'Remote modified but local was deleted');
+		return planConflict(path, 'remote-only');
 	}
 
-	return plan(path, 'skip', `Unhandled state: local=${local} remote=${remote}`);
+	return plan(path, 'skip');
 }
 
 function fingerprintsMatch(input: DecisionInput): boolean {
@@ -164,10 +162,10 @@ function fingerprintsMatch(input: DecisionInput): boolean {
 	);
 }
 
-function plan(path: string, action: SyncAction, reason: string): SyncPlanItem {
-	return { path, action, reason };
+function plan(path: string, action: SyncAction): SyncPlanItem {
+	return { path, action };
 }
 
-function planConflict(path: string, mode: ConflictMode, reason: string): SyncPlanItem {
-	return { path, action: 'conflict', conflictMode: mode, reason };
+function planConflict(path: string, mode: ConflictMode): SyncPlanItem {
+	return { path, action: 'conflict', conflictMode: mode };
 }

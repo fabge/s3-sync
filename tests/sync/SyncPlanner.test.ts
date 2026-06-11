@@ -16,7 +16,6 @@ import { decide } from '../../src/sync/SyncDecisionTable';
 import { readVaultFile } from '../../src/utils/vaultFiles';
 import { S3Provider } from '../../src/storage/S3Provider';
 import { SyncJournal } from '../../src/sync/SyncJournal';
-import { SyncPathCodec } from '../../src/sync/SyncPathCodec';
 import { fingerprint } from '../../src/utils/fingerprint';
 
 jest.mock('../../src/storage/S3Provider', () => ({
@@ -31,14 +30,6 @@ jest.mock('../../src/sync/SyncJournal', () => ({
 	SyncJournal: jest.fn().mockImplementation(() => ({
 		getAllStateRecords: jest.fn(),
 		getAllConflicts: jest.fn(),
-	})),
-}));
-
-jest.mock('../../src/sync/SyncPathCodec', () => ({
-	SyncPathCodec: jest.fn().mockImplementation(() => ({
-		isMetadataKey: jest.fn(),
-		remoteToLocal: jest.fn(),
-		localToRemote: jest.fn(),
 	})),
 }));
 
@@ -95,12 +86,6 @@ interface MockSyncJournal {
 	getAllConflicts: jest.Mock<Promise<ConflictRecord[]>, []>;
 }
 
-interface MockSyncPathCodec {
-	isMetadataKey: jest.Mock<boolean, [string]>;
-	remoteToLocal: jest.Mock<string, [string]>;
-	localToRemote: jest.Mock<string, [string]>;
-}
-
 interface VaultWithAddFile extends Vault {
 	_addFile(path: string, content: string): TFile;
 }
@@ -135,7 +120,7 @@ function createConflictRecord(overrides: Partial<ConflictRecord> = {}): Conflict
 
 function createRemoteObject(overrides: Partial<S3ObjectInfo> = {}): S3ObjectInfo {
 	return {
-		key: 'vault/note.md',
+		key: 'note.md',
 		etag: 'etag-remote',
 		...overrides,
 	};
@@ -153,8 +138,11 @@ function createPlanItem(path: string, action: SyncPlanItem['action']): SyncPlanI
 	return {
 		path,
 		action,
-		reason: `${action} ${path}`,
 	};
+}
+
+function encode(text: string): Uint8Array {
+	return new TextEncoder().encode(text);
 }
 
 function getPlannerPrivate(planner: SyncPlanner): SyncPlannerPrivate {
@@ -167,7 +155,6 @@ describe('SyncPlanner', () => {
 	let settings: S3SyncSettings;
 	let s3Provider: MockS3Provider;
 	let journal: MockSyncJournal;
-	let pathCodec: MockSyncPathCodec;
 	let planner: SyncPlanner;
 
 	const mockedDecide = jest.mocked(decide);
@@ -180,7 +167,6 @@ describe('SyncPlanner', () => {
 			app,
 			s3Provider as unknown as S3Provider,
 			journal as unknown as SyncJournal,
-			pathCodec as unknown as SyncPathCodec,
 			settings,
 		);
 	}
@@ -211,26 +197,16 @@ describe('SyncPlanner', () => {
 			getAllConflicts: jest.fn(),
 		};
 
-		pathCodec = {
-			isMetadataKey: jest.fn(),
-			remoteToLocal: jest.fn(),
-			localToRemote: jest.fn(),
-		};
-
 		s3Provider.listObjects.mockResolvedValue([]);
 		s3Provider.headObject.mockResolvedValue(null);
 		s3Provider.downloadFileWithMetadata.mockResolvedValue(null);
 		journal.getAllStateRecords.mockResolvedValue([]);
 		journal.getAllConflicts.mockResolvedValue([]);
-		pathCodec.isMetadataKey.mockReturnValue(false);
-		pathCodec.remoteToLocal.mockImplementation((key) => key.replace(/^vault\//u, ''));
-		pathCodec.localToRemote.mockImplementation((path) => `vault/${path}`);
 		mockedFingerprint.mockResolvedValue('sha256:fingerprint');
-		mockedReadVaultFile.mockResolvedValue('local-content');
+		mockedReadVaultFile.mockResolvedValue(encode('local-content'));
 		mockedDecide.mockImplementation((input) => ({
 			path: input.path,
 			action: 'skip',
-			reason: `skip ${input.path}`,
 		}));
 
 		planner = createPlanner();
@@ -240,9 +216,37 @@ describe('SyncPlanner', () => {
 		it('returns an empty plan for an empty vault, empty remote, and no baselines', async () => {
 			const plan = await planner.buildPlan();
 
-			expect(plan).toEqual([]);
+			expect(plan.items).toEqual([]);
+			expect(plan.syncedFileCount).toBe(0);
+			expect(plan.changedSyncedFileCount).toBe(0);
 			expect(s3Provider.listObjects).toHaveBeenCalledWith();
 			expect(mockedDecide).not.toHaveBeenCalled();
+		});
+
+		it('counts only baselined files toward the change-protection numbers', async () => {
+			// One baselined file that the plan changes, one untouched baselined
+			// file, and one brand-new file: new files must not count as changes.
+			addVaultFile('changed.md', 'changed', 200, 7);
+			addVaultFile('stable.md', 'stable', 100, 6);
+			addVaultFile('brand-new.md', 'new', 300, 3);
+			journal.getAllStateRecords.mockResolvedValue([
+				createStateRecord({ path: 'changed.md', localMtime: 100, localSize: 7 }),
+				createStateRecord({ path: 'stable.md', localMtime: 100, localSize: 6 }),
+			]);
+			mockedDecide.mockImplementation((input) => {
+				const actions: Record<string, SyncPlanItem['action']> = {
+					'changed.md': 'upload',
+					'stable.md': 'skip',
+					'brand-new.md': 'upload',
+				};
+				return createPlanItem(input.path, actions[input.path] as SyncPlanItem['action']);
+			});
+
+			const plan = await planner.buildPlan();
+
+			expect(plan.items).toHaveLength(2);
+			expect(plan.syncedFileCount).toBe(2);
+			expect(plan.changedSyncedFileCount).toBe(1);
 		});
 
 		it('plans an upload for a local-only file with no baseline', async () => {
@@ -255,7 +259,7 @@ describe('SyncPlanner', () => {
 
 			const plan = await planner.buildPlan();
 
-			expect(plan).toEqual([
+			expect(plan.items).toEqual([
 				expect.objectContaining({
 					path: 'local-only.md',
 					action: 'upload',
@@ -268,7 +272,7 @@ describe('SyncPlanner', () => {
 
 		it('plans a download for a remote-only file with no baseline', async () => {
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/remote-only.md', etag: 'remote-etag' }),
+				createRemoteObject({ key: 'remote-only.md', etag: 'remote-etag' }),
 			]);
 			mockedDecide.mockImplementation((input) => {
 				expect(input.local).toBe('L0');
@@ -278,7 +282,7 @@ describe('SyncPlanner', () => {
 
 			const plan = await planner.buildPlan();
 
-			expect(plan).toEqual([
+			expect(plan.items).toEqual([
 				expect.objectContaining({
 					path: 'remote-only.md',
 					action: 'download',
@@ -291,13 +295,13 @@ describe('SyncPlanner', () => {
 		it('passes fingerprints into first-sync decisions when both sides exist', async () => {
 			addVaultFile('same.md', 'same content');
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/same.md' }),
+				createRemoteObject({ key: 'same.md' }),
 			]);
 			s3Provider.headObject.mockResolvedValue({
 				etag: 'remote-etag',
 				fingerprint: 'sha256:same',
 			});
-			mockedReadVaultFile.mockResolvedValue('same content');
+			mockedReadVaultFile.mockResolvedValue(encode('same content'));
 			mockedFingerprint.mockResolvedValue('sha256:same');
 			mockedDecide.mockImplementation((input) => {
 				expect(input.local).toBe('L+');
@@ -309,7 +313,7 @@ describe('SyncPlanner', () => {
 
 			const plan = await planner.buildPlan();
 
-			expect(plan).toEqual([
+			expect(plan.items).toEqual([
 				expect.objectContaining({
 					path: 'same.md',
 					action: 'adopt',
@@ -320,7 +324,7 @@ describe('SyncPlanner', () => {
 		it('filters skip items when local and remote both match the baseline', async () => {
 			addVaultFile('stable.md', '1234567890', 500, 10);
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/stable.md', etag: '"etag-stable"' }),
+				createRemoteObject({ key: 'stable.md', etag: '"etag-stable"' }),
 			]);
 			journal.getAllStateRecords.mockResolvedValue([
 				createStateRecord({
@@ -339,7 +343,7 @@ describe('SyncPlanner', () => {
 
 			const plan = await planner.buildPlan();
 
-			expect(plan).toEqual([]);
+			expect(plan.items).toEqual([]);
 		});
 
 		it('passes conflict state into decide and returns the decided plan item', async () => {
@@ -353,13 +357,12 @@ describe('SyncPlanner', () => {
 					path: input.path,
 					action: 'conflict',
 					conflictMode: 'local-only',
-					reason: 'conflict from decision table',
 				};
 			});
 
 			const plan = await planner.buildPlan();
 
-			expect(plan).toEqual([
+			expect(plan.items).toEqual([
 				expect.objectContaining({
 					path: 'conflicted.md',
 					action: 'conflict',
@@ -373,13 +376,13 @@ describe('SyncPlanner', () => {
 
 		it('strips quotes from remote ETags before attaching them to plan items', async () => {
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/quoted.md', etag: '"abc"' }),
+				createRemoteObject({ key: 'quoted.md', etag: '"abc"' }),
 			]);
 			mockedDecide.mockReturnValue(createPlanItem('quoted.md', 'download'));
 
 			const plan = await planner.buildPlan();
 
-			expect(plan).toEqual([
+			expect(plan.items).toEqual([
 				expect.objectContaining({
 					path: 'quoted.md',
 					expectedRemoteEtag: 'abc',
@@ -393,7 +396,7 @@ describe('SyncPlanner', () => {
 
 			const plan = await planner.buildPlan();
 
-			expect(plan).toEqual([
+			expect(plan.items).toEqual([
 				expect.objectContaining({
 					path: 'missing-remote.md',
 					expectRemoteAbsent: true,
@@ -409,9 +412,9 @@ describe('SyncPlanner', () => {
 			addVaultFile('adopt-a.md');
 			addVaultFile('conflict-g.md');
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/delete-local-c.md' }),
-				createRemoteObject({ key: 'vault/download-e.md' }),
-				createRemoteObject({ key: 'vault/adopt-a.md' }),
+				createRemoteObject({ key: 'delete-local-c.md' }),
+				createRemoteObject({ key: 'download-e.md' }),
+				createRemoteObject({ key: 'adopt-a.md' }),
 			]);
 			journal.getAllStateRecords.mockResolvedValue([
 				createStateRecord({ path: 'forget-b.md' }),
@@ -432,7 +435,7 @@ describe('SyncPlanner', () => {
 
 			const plan = await planner.buildPlan();
 
-			expect(plan.map((item) => item.action)).toEqual([
+			expect(plan.items.map((item) => item.action)).toEqual([
 				'adopt',
 				'forget',
 				'delete-local',
@@ -441,7 +444,7 @@ describe('SyncPlanner', () => {
 				'upload',
 				'conflict',
 			]);
-			expect(plan.map((item) => item.path)).toEqual([
+			expect(plan.items.map((item) => item.path)).toEqual([
 				'adopt-a.md',
 				'forget-b.md',
 				'delete-local-c.md',
@@ -459,10 +462,9 @@ describe('SyncPlanner', () => {
 			addVaultFile('dir/LOCAL_note.md');
 			addVaultFile('dir/REMOTE_note.md');
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/dir/note.md', etag: '"remote-etag"' }),
-				createRemoteObject({ key: 'vault/.obsidian-s3-sync/engine.json' }),
+				createRemoteObject({ key: 'dir/note.md', etag: '"remote-etag"' }),
+				createRemoteObject({ key: '.obsidian-s3-sync/engine.json' }),
 			]);
-			pathCodec.isMetadataKey.mockImplementation((key) => key.includes('.obsidian-s3-sync/engine.json'));
 			journal.getAllStateRecords.mockResolvedValue([
 				createStateRecord({ path: 'dir/note.md' }),
 			]);
@@ -500,19 +502,16 @@ describe('SyncPlanner', () => {
 			expect(contexts.has('dir/REMOTE_note.md')).toBe(true);
 		});
 
-		it('excludes local, remote, baseline, and conflict entries that match exclusion rules', async () => {
+		it('excludes local, remote, and baseline entries that match exclusion rules', async () => {
 			planner = createPlanner();
 			addVaultFile('.trash/local.md');
 			addVaultFile('folder/.obsidian-s3-sync-hidden.md');
 			s3Provider.listObjects.mockResolvedValue([
-				createRemoteObject({ key: 'vault/.trash/remote.md' }),
-				createRemoteObject({ key: 'vault/folder/.obsidian-s3-sync-remote.md' }),
+				createRemoteObject({ key: '.trash/remote.md' }),
+				createRemoteObject({ key: 'folder/.obsidian-s3-sync-remote.md' }),
 			]);
 			journal.getAllStateRecords.mockResolvedValue([
 				createStateRecord({ path: '.trash/baseline.md' }),
-			]);
-			journal.getAllConflicts.mockResolvedValue([
-				createConflictRecord({ path: '.trash/conflict.md' }),
 			]);
 
 			const contexts = await getPlannerPrivate(planner).discoverState();
@@ -521,7 +520,26 @@ describe('SyncPlanner', () => {
 			expect(contexts.has('.trash/local.md')).toBe(false);
 			expect(contexts.has('folder/.obsidian-s3-sync-hidden.md')).toBe(false);
 			expect(contexts.has('.trash/baseline.md')).toBe(false);
-			expect(contexts.has('.trash/conflict.md')).toBe(false);
+		});
+
+		it('keeps conflict records for excluded paths so they can still resolve', async () => {
+			planner = createPlanner();
+			addVaultFile('.trash/LOCAL_conflict.md');
+			journal.getAllConflicts.mockResolvedValue([
+				createConflictRecord({
+					path: '.trash/conflict.md',
+					localArtifactPath: '.trash/LOCAL_conflict.md',
+					remoteArtifactPath: '.trash/REMOTE_conflict.md',
+				}),
+			]);
+
+			const contexts = await getPlannerPrivate(planner).discoverState();
+			const context = contexts.get('.trash/conflict.md');
+
+			expect(context?.conflict).toBeDefined();
+			expect(context?.hasConflictArtifacts).toBe(true);
+			// Artifacts of an excluded conflict are never treated as ordinary files.
+			expect(contexts.has('.trash/LOCAL_conflict.md')).toBe(false);
 		});
 	});
 
@@ -564,7 +582,7 @@ describe('SyncPlanner', () => {
 
 		it('returns L= when local metadata changed but the fingerprint matches the baseline', async () => {
 			const file = addVaultFile('same-content.md', 'hello world', 400, 11);
-			mockedReadVaultFile.mockResolvedValue('hello world');
+			mockedReadVaultFile.mockResolvedValue(encode('hello world'));
 			mockedFingerprint.mockResolvedValue('sha256:same');
 
 			const result = await getPlannerPrivate(planner).classifyLocal({
@@ -581,12 +599,12 @@ describe('SyncPlanner', () => {
 
 			expect(result).toBe('L=');
 			expect(mockedReadVaultFile).toHaveBeenCalledWith(vault, file);
-			expect(mockedFingerprint).toHaveBeenCalledWith('hello world');
+			expect(mockedFingerprint).toHaveBeenCalledWith(encode('hello world'));
 		});
 
 		it('returns LΔ when local fingerprint differs from the baseline', async () => {
 			const file = addVaultFile('changed.md', 'new content', 200, 11);
-			mockedReadVaultFile.mockResolvedValue('new content');
+			mockedReadVaultFile.mockResolvedValue(encode('new content'));
 			mockedFingerprint.mockResolvedValue('sha256:new');
 
 			const result = await getPlannerPrivate(planner).classifyLocal({
@@ -619,7 +637,7 @@ describe('SyncPlanner', () => {
 			const result = await getPlannerPrivate(planner).classifyRemote({
 				path: 'remote.md',
 				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/remote.md' }),
+					objectInfo: createRemoteObject({ key: 'remote.md' }),
 				},
 				hasConflictArtifacts: false,
 			});
@@ -631,7 +649,7 @@ describe('SyncPlanner', () => {
 			const result = await getPlannerPrivate(planner).classifyRemote({
 				path: 'etag.md',
 				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/etag.md', etag: 'etag-1' }),
+					objectInfo: createRemoteObject({ key: 'etag.md', etag: 'etag-1' }),
 				},
 				baseline: createStateRecord({ path: 'etag.md', remoteEtag: 'etag-1' }),
 				hasConflictArtifacts: false,
@@ -651,7 +669,7 @@ describe('SyncPlanner', () => {
 			const result = await getPlannerPrivate(planner).classifyRemote({
 				path: 'fp-match.md',
 				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/fp-match.md', etag: 'etag-2' }),
+					objectInfo: createRemoteObject({ key: 'fp-match.md', etag: 'etag-2' }),
 				},
 				baseline: createStateRecord({
 					path: 'fp-match.md',
@@ -662,7 +680,7 @@ describe('SyncPlanner', () => {
 			});
 
 			expect(result).toBe('R=');
-			expect(s3Provider.headObject).toHaveBeenCalledWith('vault/fp-match.md');
+			expect(s3Provider.headObject).toHaveBeenCalledWith('fp-match.md');
 		});
 
 		it('returns RΔ when the ETag differs and the fingerprint differs from the baseline', async () => {
@@ -674,7 +692,7 @@ describe('SyncPlanner', () => {
 			const result = await getPlannerPrivate(planner).classifyRemote({
 				path: 'fp-diff.md',
 				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/fp-diff.md', etag: 'etag-2' }),
+					objectInfo: createRemoteObject({ key: 'fp-diff.md', etag: 'etag-2' }),
 				},
 				baseline: createStateRecord({
 					path: 'fp-diff.md',
@@ -696,7 +714,7 @@ describe('SyncPlanner', () => {
 			const result = await getPlannerPrivate(planner).classifyRemote({
 				path: 'fallback.md',
 				remote: {
-					objectInfo: createRemoteObject({ key: 'vault/fallback.md', etag: 'etag-2' }),
+					objectInfo: createRemoteObject({ key: 'fallback.md', etag: 'etag-2' }),
 				},
 				baseline: createStateRecord({
 					path: 'fallback.md',
@@ -707,8 +725,8 @@ describe('SyncPlanner', () => {
 			});
 
 			expect(result).toBe('R=');
-			expect(s3Provider.headObject).toHaveBeenCalledWith('vault/fallback.md');
-			expect(s3Provider.downloadFileWithMetadata).toHaveBeenCalledWith('vault/fallback.md');
+			expect(s3Provider.headObject).toHaveBeenCalledWith('fallback.md');
+			expect(s3Provider.downloadFileWithMetadata).toHaveBeenCalledWith('fallback.md');
 			expect(mockedFingerprint).toHaveBeenCalledWith(downloaded.content);
 		});
 	});

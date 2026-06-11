@@ -68,7 +68,6 @@ export interface SyncPlanItem {
 	path: string;
 	action: SyncAction;
 	conflictMode?: ConflictMode;
-	reason: string;
 	expectedRemoteEtag?: string;
 	expectRemoteAbsent?: boolean;
 	expectedLocalMtime?: number;
@@ -103,9 +102,6 @@ export interface DecisionInput {
 	remote: RemoteClassification;
 	hasUnresolvedConflict: boolean;
 	hasConflictArtifacts: boolean;
-	localExists: boolean;
-	remoteExists: boolean;
-	hasBaseline: boolean;
 	localFingerprint?: string;
 	remoteFingerprint?: string;
 }
@@ -133,7 +129,6 @@ export interface SyncState {
 	status: SyncStatus;
 	lastSyncTime: number | null;
 	conflictCount: number;
-	isSyncing: boolean;
 	lastError: string | null;
 }
 

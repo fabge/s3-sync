@@ -8,10 +8,6 @@ jest.mock('../../src/sync/SyncJournal', () => ({
 	SyncJournal: jest.fn(),
 }));
 
-jest.mock('../../src/sync/SyncPathCodec', () => ({
-	SyncPathCodec: jest.fn(),
-}));
-
 jest.mock('../../src/utils/fingerprint', () => ({
 	fingerprint: jest.fn(),
 }));
@@ -99,12 +95,7 @@ interface MockJournal {
 	deleteStateRecord: jest.Mock<Promise<void>, [string]>;
 	setConflict: jest.Mock<Promise<void>, [ConflictRecord]>;
 	deleteConflict: jest.Mock<Promise<void>, [string]>;
-	getStateRecord: jest.Mock<Promise<SyncStateRecord | undefined>, [string]>;
 	getAllConflicts: jest.Mock<Promise<ConflictRecord[]>, []>;
-}
-
-interface MockPathCodec {
-	localToRemote: jest.Mock<string, [string]>;
 }
 
 interface ExecutorInternals {
@@ -116,7 +107,7 @@ interface ExecutorInternals {
 	executeDeleteRemote(item: SyncPlanItem): Promise<void>;
 	executeConflict(item: SyncPlanItem): Promise<void>;
 	executeForget(item: SyncPlanItem): Promise<void>;
-	writeLocalFile(path: string, content: string | Uint8Array): Promise<void>;
+	writeLocalFile(path: string, content: Uint8Array): Promise<void>;
 	ensureParentFolders(path: string): Promise<void>;
 	guessContentType(path: string): string;
 	toSyncError(path: string, action: SyncAction, error: unknown): SyncError;
@@ -128,7 +119,6 @@ interface ExecutorContext {
 	vaultEntries: Map<string, TFile | TFolder>;
 	s3Provider: MockS3Provider;
 	journal: MockJournal;
-	pathCodec: MockPathCodec;
 	executor: SyncExecutor;
 	internals: ExecutorInternals;
 	addFile(path: string, content?: string | Uint8Array, stats?: Partial<FileStats>): TFile;
@@ -168,9 +158,12 @@ function createPlanItem(action: SyncAction, overrides: Partial<SyncPlanItem> = {
 	return {
 		path: 'notes/test.md',
 		action,
-		reason: `${action} reason`,
 		...overrides,
 	};
+}
+
+function encode(text: string): Uint8Array {
+	return new TextEncoder().encode(text);
 }
 
 function createResult(): SyncResult {
@@ -268,19 +261,13 @@ function createExecutorContext(): ExecutorContext {
 		deleteStateRecord: jest.fn().mockResolvedValue(undefined),
 		setConflict: jest.fn().mockResolvedValue(undefined),
 		deleteConflict: jest.fn().mockResolvedValue(undefined),
-		getStateRecord: jest.fn().mockResolvedValue(undefined),
 		getAllConflicts: jest.fn().mockResolvedValue([]),
-	};
-
-	const pathCodec: MockPathCodec = {
-		localToRemote: jest.fn((path: string) => `remote/${path}`),
 	};
 
 	const executor = new SyncExecutor(
 		app as unknown as App,
 		s3Provider as never,
 		journal as never,
-		pathCodec as never,
 	);
 
 	const internals = executor as unknown as ExecutorInternals;
@@ -290,7 +277,6 @@ function createExecutorContext(): ExecutorContext {
 		vaultEntries,
 		s3Provider,
 		journal,
-		pathCodec,
 		executor,
 		internals,
 		addFile(path: string, content: string | Uint8Array = '', stats: Partial<FileStats> = {}): TFile {
@@ -313,7 +299,7 @@ describe('SyncExecutor', () => {
 	beforeEach(() => {
 		jest.clearAllMocks();
 		mockedGetVaultFileKind.mockImplementation((path: string) => path.endsWith('.md') ? 'text' : 'binary');
-		mockedReadVaultFile.mockResolvedValue('vault-content');
+		mockedReadVaultFile.mockResolvedValue(encode('vault-content'));
 		mockedFingerprint.mockResolvedValue('fingerprint-1');
 		mockedToArrayBuffer.mockImplementation((content: Uint8Array) => content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength));
 	});
@@ -531,14 +517,14 @@ describe('SyncExecutor', () => {
 			const file = addFile('notes/test.md', 'local body', { mtime: 321, size: 10 });
 			s3Provider.headObject.mockResolvedValue(createHeadResult());
 			app.vault.getAbstractFileByPath.mockReturnValue(file);
-			mockedReadVaultFile.mockResolvedValue('local body');
+			mockedReadVaultFile.mockResolvedValue(encode('local body'));
 			mockedFingerprint.mockResolvedValue('local-fingerprint');
 
 			await internals.executeAdopt(createPlanItem('adopt'));
 
-			expect(s3Provider.headObject).toHaveBeenCalledWith('remote/notes/test.md');
+			expect(s3Provider.headObject).toHaveBeenCalledWith('notes/test.md');
 			expect(mockedReadVaultFile).toHaveBeenCalledWith(app.vault, file);
-			expect(mockedFingerprint).toHaveBeenCalledWith('local body');
+			expect(mockedFingerprint).toHaveBeenCalledWith(encode('local body'));
 			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',
 				contentFingerprint: 'local-fingerprint',
@@ -547,6 +533,33 @@ describe('SyncExecutor', () => {
 				remoteEtag: 'remote-etag',
 			}));
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
+		});
+
+		it('throws when the remote ETag changed since planning', async () => {
+			const { internals, app, addFile, s3Provider, journal } = createExecutorContext();
+			const file = addFile('notes/test.md', 'local body');
+			app.vault.getAbstractFileByPath.mockReturnValue(file);
+			s3Provider.headObject.mockResolvedValue(createHeadResult({ etag: 'new-etag' }));
+
+			await expect(internals.executeAdopt(createPlanItem('adopt', {
+				expectedRemoteEtag: 'planned-etag',
+			}))).rejects.toThrow('Remote file notes/test.md changed since planning. Skipping adopt.');
+
+			expect(journal.setStateRecord).not.toHaveBeenCalled();
+		});
+
+		it('throws when the local file changed since planning', async () => {
+			const { internals, app, addFile, s3Provider, journal } = createExecutorContext();
+			const file = addFile('notes/test.md', 'changed body', { mtime: 999, size: 12 });
+			app.vault.getAbstractFileByPath.mockReturnValue(file);
+			s3Provider.headObject.mockResolvedValue(createHeadResult());
+
+			await expect(internals.executeAdopt(createPlanItem('adopt', {
+				expectedLocalMtime: 321,
+				expectedLocalSize: 10,
+			}))).rejects.toThrow('Local file notes/test.md changed since planning. Skipping adopt.');
+
+			expect(journal.setStateRecord).not.toHaveBeenCalled();
 		});
 
 		it('throws when the remote file disappears before adopt executes', async () => {
@@ -578,15 +591,15 @@ describe('SyncExecutor', () => {
 			const { internals, app, addFile, s3Provider, journal } = createExecutorContext();
 			const file = addFile('notes/test.md', 'upload me', { mtime: 444, size: 9 });
 			app.vault.getAbstractFileByPath.mockReturnValue(file);
-			mockedReadVaultFile.mockResolvedValue('upload me');
+			mockedReadVaultFile.mockResolvedValue(encode('upload me'));
 			mockedFingerprint.mockResolvedValue('upload-fingerprint');
 			s3Provider.uploadFile.mockResolvedValue('etag-uploaded');
 
 			await internals.executeUpload(createPlanItem('upload', { expectRemoteAbsent: true }));
 
 			expect(mockedReadVaultFile).toHaveBeenCalledWith(app.vault, file);
-			expect(mockedFingerprint).toHaveBeenCalledWith('upload me');
-			expect(s3Provider.uploadFile).toHaveBeenCalledWith('remote/notes/test.md', new TextEncoder().encode('upload me'), {
+			expect(mockedFingerprint).toHaveBeenCalledWith(encode('upload me'));
+			expect(s3Provider.uploadFile).toHaveBeenCalledWith('notes/test.md', new TextEncoder().encode('upload me'), {
 				contentType: 'text/plain; charset=utf-8',
 				ifMatch: undefined,
 				ifNoneMatch: '*',
@@ -608,12 +621,12 @@ describe('SyncExecutor', () => {
 			const { internals, app, addFile, s3Provider } = createExecutorContext();
 			const file = addFile('notes/test.md', 'upload me', { mtime: 444, size: 9 });
 			app.vault.getAbstractFileByPath.mockReturnValue(file);
-			mockedReadVaultFile.mockResolvedValue('upload me');
+			mockedReadVaultFile.mockResolvedValue(encode('upload me'));
 			s3Provider.uploadFile.mockResolvedValue('etag-uploaded');
 
 			await internals.executeUpload(createPlanItem('upload', { expectedRemoteEtag: 'expected-etag' }));
 
-			expect(s3Provider.uploadFile).toHaveBeenCalledWith('remote/notes/test.md', new TextEncoder().encode('upload me'), expect.objectContaining({
+			expect(s3Provider.uploadFile).toHaveBeenCalledWith('notes/test.md', new TextEncoder().encode('upload me'), expect.objectContaining({
 				ifMatch: 'expected-etag',
 				ifNoneMatch: undefined,
 			}));
@@ -637,7 +650,7 @@ describe('SyncExecutor', () => {
 			const { internals, app, addFile, s3Provider, journal } = createExecutorContext();
 			const file = addFile('notes/test.md', 'upload me', { mtime: 444, size: 9 });
 			app.vault.getAbstractFileByPath.mockReturnValue(file);
-			mockedReadVaultFile.mockResolvedValue('upload me');
+			mockedReadVaultFile.mockResolvedValue(encode('upload me'));
 			mockedFingerprint.mockResolvedValue('upload-fingerprint');
 			s3Provider.uploadFile.mockImplementation(async () => {
 				file.stat = { ...file.stat, mtime: 555, size: 10 };
@@ -658,11 +671,11 @@ describe('SyncExecutor', () => {
 	});
 
 	describe('executeDownload', () => {
-		it('downloads text content, writes it locally, and records new state', async () => {
+		it('downloads content, writes the raw bytes locally, and records new state', async () => {
 			const { internals, addFile, s3Provider, journal, app } = createExecutorContext();
 			const localFile = addFile('notes/test.md', 'hello world', { mtime: 654, size: 11 });
 			const writeSpy = jest.spyOn(internals, 'writeLocalFile').mockResolvedValue(undefined);
-			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: new TextEncoder().encode('hello world') }));
+			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: encode('hello world') }));
 			app.vault.getAbstractFileByPath.mockReturnValue(localFile);
 
 			await internals.executeDownload(createPlanItem('download', {
@@ -670,9 +683,9 @@ describe('SyncExecutor', () => {
 				expectedLocalSize: 11,
 			}));
 
-			expect(s3Provider.downloadFileWithMetadata).toHaveBeenCalledWith('remote/notes/test.md');
-			expect(writeSpy).toHaveBeenCalledWith('notes/test.md', 'hello world');
-			expect(mockedFingerprint).toHaveBeenCalledWith('hello world');
+			expect(s3Provider.downloadFileWithMetadata).toHaveBeenCalledWith('notes/test.md');
+			expect(writeSpy).toHaveBeenCalledWith('notes/test.md', encode('hello world'));
+			expect(mockedFingerprint).toHaveBeenCalledWith(encode('hello world'));
 			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',
 				contentFingerprint: 'fingerprint-1',
@@ -792,7 +805,7 @@ describe('SyncExecutor', () => {
 			await internals.executeDeleteRemote(createPlanItem('delete-remote', { expectedRemoteEtag: 'expected-etag' }));
 
 			expect(s3Provider.headObject).not.toHaveBeenCalled();
-			expect(s3Provider.deleteFile).toHaveBeenCalledWith('remote/notes/test.md', 'expected-etag');
+			expect(s3Provider.deleteFile).toHaveBeenCalledWith('notes/test.md', 'expected-etag');
 			expect(journal.deleteStateRecord).toHaveBeenCalledWith('notes/test.md');
 			expect(journal.deleteConflict).toHaveBeenCalledWith('notes/test.md');
 		});
@@ -803,7 +816,7 @@ describe('SyncExecutor', () => {
 			await internals.executeDeleteRemote(createPlanItem('delete-remote'));
 
 			expect(s3Provider.headObject).not.toHaveBeenCalled();
-			expect(s3Provider.deleteFile).toHaveBeenCalledWith('remote/notes/test.md', undefined);
+			expect(s3Provider.deleteFile).toHaveBeenCalledWith('notes/test.md', undefined);
 		});
 	});
 
@@ -813,7 +826,7 @@ describe('SyncExecutor', () => {
 			const file = addFile('notes/test.md', 'local body');
 			const writeSpy = jest.spyOn(internals, 'writeLocalFile').mockResolvedValue(undefined);
 			app.vault.getAbstractFileByPath.mockReturnValue(file);
-			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: new TextEncoder().encode('remote body') }));
+			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: encode('remote body') }));
 
 			await internals.executeConflict(createPlanItem('conflict', {
 				conflictMode: 'both',
@@ -822,13 +835,31 @@ describe('SyncExecutor', () => {
 			}));
 
 			expect(app.vault.rename).toHaveBeenCalledWith(file, 'notes/LOCAL_test.md');
-			expect(writeSpy).toHaveBeenCalledWith('notes/REMOTE_test.md', 'remote body');
+			expect(writeSpy).toHaveBeenCalledWith('notes/REMOTE_test.md', encode('remote body'));
 			expect(journal.setConflict).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',
 				mode: 'both',
 				localArtifactPath: 'notes/LOCAL_test.md',
 				remoteArtifactPath: 'notes/REMOTE_test.md',
 			}));
+			// The record must be durable before the original is displaced.
+			const setConflictOrder = journal.setConflict.mock.invocationCallOrder[0]!;
+			const renameOrder = app.vault.rename.mock.invocationCallOrder[0]!;
+			expect(setConflictOrder).toBeLessThan(renameOrder);
+		});
+
+		it('does not displace the original when the remote download fails', async () => {
+			const { internals, addFile, app, s3Provider, journal } = createExecutorContext();
+			const file = addFile('notes/test.md', 'local body');
+			app.vault.getAbstractFileByPath.mockReturnValue(file);
+			s3Provider.downloadFileWithMetadata.mockRejectedValue(new Error('network down'));
+
+			await expect(internals.executeConflict(createPlanItem('conflict', {
+				conflictMode: 'both',
+			}))).rejects.toThrow('network down');
+
+			expect(app.vault.rename).not.toHaveBeenCalled();
+			expect(journal.setConflict).not.toHaveBeenCalled();
 		});
 
 		it('does not rename a local conflict file that changed after planning', async () => {
@@ -911,18 +942,7 @@ describe('SyncExecutor', () => {
 	});
 
 	describe('writeLocalFile', () => {
-		it('modifies an existing text file with string content', async () => {
-			const { internals, app, addFile } = createExecutorContext();
-			const file = addFile('notes/test.md', 'old text');
-			app.vault.getAbstractFileByPath.mockReturnValue(file);
-
-			await internals.writeLocalFile('notes/test.md', 'new text');
-
-			expect(app.vault.modify).toHaveBeenCalledWith(file, 'new text');
-			expect(app.vault.modifyBinary).not.toHaveBeenCalled();
-		});
-
-		it('modifies an existing binary file with Uint8Array content', async () => {
+		it('modifies an existing file in place', async () => {
 			const { internals, app, addFile } = createExecutorContext();
 			const file = addFile('notes/test.png', new Uint8Array([1]));
 			const buffer = new ArrayBuffer(3);
@@ -935,18 +955,7 @@ describe('SyncExecutor', () => {
 			expect(app.vault.modifyBinary).toHaveBeenCalledWith(file, buffer);
 		});
 
-		it('creates a new text file after ensuring parent folders', async () => {
-			const { internals, app } = createExecutorContext();
-			const ensureSpy = jest.spyOn(internals, 'ensureParentFolders').mockResolvedValue(undefined);
-			app.vault.getAbstractFileByPath.mockReturnValue(null);
-
-			await internals.writeLocalFile('notes/new.md', 'created text');
-
-			expect(ensureSpy).toHaveBeenCalledWith('notes/new.md');
-			expect(app.vault.create).toHaveBeenCalledWith('notes/new.md', 'created text');
-		});
-
-		it('creates a new binary file after ensuring parent folders', async () => {
+		it('creates a new file after ensuring parent folders', async () => {
 			const { internals, app } = createExecutorContext();
 			const ensureSpy = jest.spyOn(internals, 'ensureParentFolders').mockResolvedValue(undefined);
 			const buffer = new ArrayBuffer(2);
