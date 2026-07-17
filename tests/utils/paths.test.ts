@@ -1,6 +1,7 @@
 import {
     getFilename,
     getExtension,
+    isGitInternalPath,
     matchesAnyGlob,
     isPluginOwnPath,
 } from '../../src/utils/paths';
@@ -78,6 +79,17 @@ describe('Path Utils', () => {
 
         it('should normalize backslashes in path', () => {
             expect(isPluginOwnPath('.obsidian\\plugins\\s3-sync\\data.json', '.obsidian')).toBe(true);
+        });
+    });
+
+    describe('isGitInternalPath', () => {
+        it('matches Git metadata without matching normal Git-related files', () => {
+            expect(isGitInternalPath('.git')).toBe(true);
+            expect(isGitInternalPath('.git/config')).toBe(true);
+            expect(isGitInternalPath('nested/.git/index')).toBe(true);
+            expect(isGitInternalPath('nested\\.git\\HEAD')).toBe(true);
+            expect(isGitInternalPath('.gitignore')).toBe(false);
+            expect(isGitInternalPath('.github/workflows/test.yml')).toBe(false);
         });
     });
 

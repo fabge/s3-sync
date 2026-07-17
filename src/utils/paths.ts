@@ -54,3 +54,8 @@ export function isPluginOwnPath(path: string, configDir: string): boolean {
 	const pluginDir = `${normalizePath(configDir)}/plugins/${PLUGIN_ID}/`;
 	return normalized.startsWith(pluginDir) || normalized === pluginDir.slice(0, -1);
 }
+
+/** Git owns every path segment named exactly `.git`; never sync its internals. */
+export function isGitInternalPath(path: string): boolean {
+	return normalizePath(path).split('/').includes('.git');
+}

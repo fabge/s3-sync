@@ -55,6 +55,8 @@ The plugin always excludes its own folder from sync, including `data.json`:
 .obsidian/plugins/s3-sync/
 ```
 
+Git metadata under any `.git` path is also always excluded.
+
 ## Permissions and data access
 
 This plugin is a sync tool, so by design it enumerates vault files and reads or writes the ones that fall inside its sync scope.
@@ -136,7 +138,7 @@ It is not recommended. Running two sync systems against the same files increases
 
 **What files are excluded by default?**
 
-`**/workspace*`, `.trash/**`, and the plugin's own folder under `.obsidian/plugins/s3-sync/`.
+The editable defaults are `**/workspace*` and `.trash/**`. Git metadata under any `.git` path and the plugin's own folder under `.obsidian/plugins/s3-sync/` are always excluded independently of these settings.
 
 ## Development
 

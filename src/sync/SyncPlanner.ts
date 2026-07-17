@@ -13,7 +13,7 @@ import {
 	SyncStateRecord,
 } from '../types';
 import { normalizeEntityTag } from '../utils/etags';
-import { matchesAnyGlob, getFilename, isPluginOwnPath } from '../utils/paths';
+import { getFilename, isGitInternalPath, isPluginOwnPath, matchesAnyGlob } from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 import { fingerprint } from '../utils/fingerprint';
 import { SyncJournal } from './SyncJournal';
@@ -271,6 +271,7 @@ export class SyncPlanner {
 	}
 
 	private shouldExclude(path: string): boolean {
+		if (isGitInternalPath(path)) return true;
 		if (isPluginOwnPath(path, this.app.vault.configDir)) return true;
 		if (getFilename(path).startsWith('.obsidian-s3-sync')) return true;
 		return matchesAnyGlob(path, this.settings.excludePatterns);

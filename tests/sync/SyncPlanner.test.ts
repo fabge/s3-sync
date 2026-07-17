@@ -774,6 +774,14 @@ describe('SyncPlanner', () => {
 	});
 
 	describe('shouldExclude', () => {
+		it('always excludes Git metadata but not normal Git-related files', () => {
+			expect(getPlannerPrivate(planner).shouldExclude('.git')).toBe(true);
+			expect(getPlannerPrivate(planner).shouldExclude('.git/config')).toBe(true);
+			expect(getPlannerPrivate(planner).shouldExclude('nested/.git/index')).toBe(true);
+			expect(getPlannerPrivate(planner).shouldExclude('.gitignore')).toBe(false);
+			expect(getPlannerPrivate(planner).shouldExclude('.github/workflows/test.yml')).toBe(false);
+		});
+
 		it('does not globally exclude LOCAL_ and REMOTE_ filenames', () => {
 			expect(getPlannerPrivate(planner).shouldExclude('folder/LOCAL_note.md')).toBe(false);
 			expect(getPlannerPrivate(planner).shouldExclude('folder/REMOTE_note.md')).toBe(false);
