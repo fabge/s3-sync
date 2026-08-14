@@ -16,13 +16,12 @@ jest.mock('../../src/sync/SyncExecutor', () => ({
 	SyncExecutor: jest.fn(),
 }));
 
-import { App } from 'obsidian';
 import { S3Provider } from '../../src/storage/S3Provider';
 import { SyncEngine } from '../../src/sync/SyncEngine';
 import { SyncExecutor } from '../../src/sync/SyncExecutor';
 import { SyncJournal } from '../../src/sync/SyncJournal';
 import { SyncPlan, SyncPlanner } from '../../src/sync/SyncPlanner';
-import { DEFAULT_SETTINGS, S3SyncSettings, SyncPlanItem, SyncResult } from '../../src/types';
+import { DEFAULT_SETTINGS, S3SyncSettings, SyncPlanItem, SyncResult, VaultLike } from '../../src/types';
 
 interface MockPlanner {
 	buildPlan: jest.Mock<Promise<SyncPlan>, []>;
@@ -49,7 +48,7 @@ interface Deferred<T> {
 }
 
 interface EngineContext {
-	app: App;
+	app: VaultLike;
 	s3Provider: MockS3Provider;
 	journal: MockJournal;
 	planner: MockPlanner;
@@ -112,7 +111,9 @@ function createSyncResult(overrides: Partial<SyncResult> = {}): SyncResult {
 }
 
 function createEngineContext(overrides: Partial<S3SyncSettings> = {}): EngineContext {
-	const app = new App();
+	// SyncEngine only forwards the vault port to planner and executor, both
+	// of which are mocked here, so an empty port stub is enough.
+	const app = { configDir: '.obsidian' } as unknown as VaultLike;
 	const s3Provider: MockS3Provider = { kind: 's3-provider' };
 	const settings = createSettings(overrides);
 	const journal: MockJournal = {

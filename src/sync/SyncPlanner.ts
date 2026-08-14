@@ -1,6 +1,5 @@
 /** Read-only sync planner. Hashes content only after mtime/size and ETag fast paths fail. */
 
-import { App, TFile } from 'obsidian';
 import {
 	ConflictRecord,
 	DecisionInput,
@@ -9,11 +8,14 @@ import {
 	S3HeadResult,
 	S3ObjectInfo,
 	S3SyncSettings,
+	VaultFile,
+	VaultLike,
 	SyncPlanItem,
 	SyncStateRecord,
 } from '../types';
 import { normalizeEntityTag } from '../utils/etags';
-import { getFilename, isGitInternalPath, isPluginOwnPath, matchesAnyGlob } from '../utils/paths';
+import { isHiddenPath, matchesAnyGlob, pathSegments } from '../utils/paths';
+import { isNeverSyncable } from '../vault/hiddenPaths';
 import { readVaultFile } from '../utils/vaultFiles';
 import { fingerprint } from '../utils/fingerprint';
 import { SyncJournal } from './SyncJournal';
@@ -22,7 +24,7 @@ import { S3Provider } from '../storage/S3Provider';
 import { decide } from './SyncDecisionTable';
 
 interface LocalSnapshot {
-	file: TFile;
+	file: VaultFile;
 	mtime: number;
 	size: number;
 }
@@ -58,7 +60,7 @@ export interface SyncPlan {
 
 export class SyncPlanner {
 	constructor(
-		private app: App,
+		private vault: VaultLike,
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
 		private settings: S3SyncSettings,
@@ -121,10 +123,26 @@ export class SyncPlanner {
 		const contexts = new Map<string, PathContext>();
 		const conflictArtifacts = new Map<string, string>();
 
+		const remoteObjectsPromise = this.s3Provider.listObjects();
+		const baselinesPromise = this.journal.getAllStateRecords();
+		const conflicts = await this.journal.getAllConflicts();
+		const hiddenPatterns = new Set(this.settings.includeHiddenPaths);
+		for (const conflict of conflicts) {
+			for (const path of [conflict.path, conflict.localArtifactPath, conflict.remoteArtifactPath]) {
+				const root = path ? pathSegments(path)[0] : undefined;
+				if (root?.startsWith('.')) hiddenPatterns.add(`${root}/**`);
+			}
+		}
+		const [hiddenFiles, remoteObjects, baselines] = await Promise.all([
+			this.vault.getHiddenFiles([...hiddenPatterns]),
+			remoteObjectsPromise,
+			baselinesPromise,
+		]);
+
 		// Conflict records are processed even for excluded paths so they can
 		// still resolve (typically to a forget) instead of lingering forever,
 		// and so their artifacts are never treated as ordinary files.
-		for (const conflict of await this.journal.getAllConflicts()) {
+		for (const conflict of conflicts) {
 			this.getOrCreate(contexts, conflict.path).conflict = conflict;
 			if (conflict.localArtifactPath) {
 				conflictArtifacts.set(conflict.localArtifactPath, conflict.path);
@@ -134,9 +152,12 @@ export class SyncPlanner {
 			}
 		}
 
-		for (const file of this.app.vault.getFiles()) {
+		for (const file of [...this.vault.getFiles(), ...hiddenFiles]) {
 			const conflictPath = conflictArtifacts.get(file.path);
 			if (conflictPath) {
+				// Reported even for an excluded path. The artifacts are real
+				// files the user can still delete, and that deletion is how a
+				// conflict on an excluded path resolves.
 				this.getOrCreate(contexts, conflictPath).hasConflictArtifacts = true;
 				continue;
 			}
@@ -147,7 +168,6 @@ export class SyncPlanner {
 			ctx.local = { file, mtime: file.stat.mtime, size: file.stat.size };
 		}
 
-		const remoteObjects = await this.s3Provider.listObjects();
 		for (const obj of remoteObjects) {
 			if (isMetadataKey(obj.key)) continue;
 
@@ -158,7 +178,7 @@ export class SyncPlanner {
 			ctx.remote = { objectInfo: { ...obj, etag: normalizeEntityTag(obj.etag) } };
 		}
 
-		for (const baseline of await this.journal.getAllStateRecords()) {
+		for (const baseline of baselines) {
 			if (this.shouldExclude(baseline.path)) continue;
 			this.getOrCreate(contexts, baseline.path).baseline = baseline;
 		}
@@ -197,7 +217,7 @@ export class SyncPlanner {
 		const file = ctx.local?.file;
 		if (!file) throw new Error(`No local file for ${ctx.path}`);
 
-		const content = await readVaultFile(this.app.vault, file);
+		const content = await readVaultFile(this.vault, file);
 		ctx.localFingerprint = await fingerprint(content);
 		return ctx.localFingerprint;
 	}
@@ -271,9 +291,14 @@ export class SyncPlanner {
 	}
 
 	private shouldExclude(path: string): boolean {
-		if (isGitInternalPath(path)) return true;
-		if (isPluginOwnPath(path, this.app.vault.configDir)) return true;
-		if (getFilename(path).startsWith('.obsidian-s3-sync')) return true;
+		// Checked before the allowlist so no glob can opt these back in. The
+		// config dir is on that list, which covers this plugin's own data.json.
+		if (isNeverSyncable(path, this.vault.configDir)) return true;
+		// Dot-prefixed paths are invisible to Obsidian's index, so they sync
+		// only when explicitly allowlisted. Everything else hidden stays local.
+		if (isHiddenPath(path) && !matchesAnyGlob(path, this.settings.includeHiddenPaths)) {
+			return true;
+		}
 		return matchesAnyGlob(path, this.settings.excludePatterns);
 	}
 }

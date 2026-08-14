@@ -1,6 +1,6 @@
 /** Executes sync plans and writes journal state only after S3/vault operations succeed. */
 
-import { App, TFile, TFolder } from 'obsidian';
+import { isVaultFile, isVaultFolder } from '../vault/entries';
 import {
 	ConflictMode,
 	SyncAction,
@@ -8,8 +8,12 @@ import {
 	SyncPlanItem,
 	SyncResult,
 	SyncStateRecord,
+	VaultEntry,
+	VaultFile,
+	VaultLike,
 } from '../types';
 import { getVaultFileKind, readVaultFile, toArrayBuffer } from '../utils/vaultFiles';
+import { pathSegments } from '../utils/paths';
 import { fingerprint } from '../utils/fingerprint';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
@@ -25,7 +29,7 @@ const MAX_ERRORS = 3;
 
 export class SyncExecutor {
 	constructor(
-		private app: App,
+		private vault: VaultLike,
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
 	) {}
@@ -124,13 +128,13 @@ export class SyncExecutor {
 			throw new Error(`Remote file ${item.path} changed since planning. Skipping adopt.`);
 		}
 
-		this.assertLocalUnchanged(item, 'adopt');
-		const localFile = this.app.vault.getAbstractFileByPath(item.path);
-		if (!(localFile instanceof TFile)) {
+		const localFile = await this.vault.getAbstractFileByPath(item.path);
+		this.assertLocalUnchanged(item, 'adopt', localFile);
+		if (!isVaultFile(localFile)) {
 			throw new Error(`Local file disappeared during adopt: ${item.path}`);
 		}
 
-		const localContent = await readVaultFile(this.app.vault, localFile);
+		const localContent = await readVaultFile(this.vault, localFile);
 		const contentFingerprint = await fingerprint(localContent);
 
 		const record: SyncStateRecord = {
@@ -147,15 +151,15 @@ export class SyncExecutor {
 
 	/** Conditional headers guard create-only / update-only uploads. */
 	private async executeUpload(item: SyncPlanItem): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(item.path);
-		if (!(file instanceof TFile)) {
+		const file = await this.vault.getAbstractFileByPath(item.path);
+		if (!isVaultFile(file)) {
 			throw new Error(`File not found for upload: ${item.path}`);
 		}
 
-		this.assertLocalUnchanged(item, 'upload');
+		this.assertLocalUnchanged(item, 'upload', file);
 		const localMtime = file.stat.mtime;
 		const localSize = file.stat.size;
-		const content = await readVaultFile(this.app.vault, file);
+		const content = await readVaultFile(this.vault, file);
 		const contentFingerprint = await fingerprint(content);
 		const remoteKey = localToRemote(item.path);
 
@@ -167,11 +171,13 @@ export class SyncExecutor {
 				'obsidian-fingerprint': contentFingerprint,
 			},
 		});
+		// Deliberately re-read: this proves the file did not change *during*
+		// the upload, so the stale pre-upload entry would defeat the check.
 		this.assertLocalUnchanged({
 			...item,
 			expectedLocalMtime: localMtime,
 			expectedLocalSize: localSize,
-		}, 'upload');
+		}, 'upload', await this.vault.getAbstractFileByPath(item.path));
 
 		const record: SyncStateRecord = {
 			path: item.path,
@@ -193,12 +199,15 @@ export class SyncExecutor {
 			throw new Error(`Remote file disappeared during sync: ${item.path}`);
 		}
 
-		this.assertLocalUnchanged(item, 'download');
-		await this.writeLocalFile(item.path, downloaded.content);
+		const existing = await this.vault.getAbstractFileByPath(item.path);
+		this.assertLocalUnchanged(item, 'download', existing);
+		await this.writeLocalFile(item.path, downloaded.content, existing);
 		await new Promise((resolve) => window.setTimeout(resolve, 0));
 
-		const localFile = this.app.vault.getAbstractFileByPath(item.path);
-		if (!(localFile instanceof TFile)) {
+		// Re-read deliberately: the record must carry the mtime/size of the
+		// file as it landed on disk, not as it looked before the write.
+		const localFile = await this.vault.getAbstractFileByPath(item.path);
+		if (!isVaultFile(localFile)) {
 			throw new Error(`Downloaded file not found in vault: ${item.path}`);
 		}
 
@@ -215,10 +224,10 @@ export class SyncExecutor {
 	}
 
 	private async executeDeleteLocal(item: SyncPlanItem): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(item.path);
-		if (file instanceof TFile) {
-			this.assertLocalUnchanged(item, 'delete');
-			await this.app.fileManager.trashFile(file);
+		const file = await this.vault.getAbstractFileByPath(item.path);
+		if (isVaultFile(file)) {
+			this.assertLocalUnchanged(item, 'delete', file);
+			await this.vault.trashFile(file);
 		}
 
 		await this.journal.deleteStateRecord(item.path);
@@ -237,16 +246,17 @@ export class SyncExecutor {
 	/** Create conflict artifacts; the conflict record blocks sync until the user removes them. */
 	private async executeConflict(item: SyncPlanItem): Promise<void> {
 		const mode: ConflictMode = item.conflictMode ?? 'both';
-		const fileName = item.path.substring(item.path.lastIndexOf('/') + 1);
-		const dir = item.path.includes('/') ? item.path.substring(0, item.path.lastIndexOf('/')) : '';
+		const segments = pathSegments(item.path);
+		const fileName = segments[segments.length - 1] ?? item.path;
+		const dir = segments.slice(0, -1).join('/');
 		const localArtifactPath = dir ? `${dir}/LOCAL_${fileName}` : `LOCAL_${fileName}`;
 		const remoteArtifactPath = dir ? `${dir}/REMOTE_${fileName}` : `REMOTE_${fileName}`;
 
-		let originalFile: TFile | null = null;
+		let originalFile: VaultFile | null = null;
 		if (mode === 'both' || mode === 'local-only') {
-			this.assertLocalUnchanged(item, 'conflict');
-			const file = this.app.vault.getAbstractFileByPath(item.path);
-			if (!(file instanceof TFile)) {
+			const file = await this.vault.getAbstractFileByPath(item.path);
+			this.assertLocalUnchanged(item, 'conflict', file);
+			if (!isVaultFile(file)) {
 				throw new Error(`File not found for conflict: ${item.path}`);
 			}
 			originalFile = file;
@@ -271,7 +281,7 @@ export class SyncExecutor {
 		});
 
 		if (originalFile) {
-			await this.app.vault.rename(originalFile, localArtifactPath);
+			await this.vault.rename(originalFile, localArtifactPath);
 		}
 	}
 
@@ -280,15 +290,21 @@ export class SyncExecutor {
 		await this.journal.deleteConflict(item.path);
 	}
 
-	private async writeLocalFile(path: string, content: Uint8Array): Promise<void> {
-		const existingFile = this.app.vault.getAbstractFileByPath(path);
-		if (existingFile instanceof TFile) {
-			await this.app.vault.modifyBinary(existingFile, toArrayBuffer(content));
+	private async writeLocalFile(
+		path: string,
+		content: Uint8Array,
+		known?: VaultEntry | null,
+	): Promise<void> {
+		const existingFile = known !== undefined
+			? known
+			: await this.vault.getAbstractFileByPath(path);
+		if (isVaultFile(existingFile)) {
+			await this.vault.modifyBinary(existingFile, toArrayBuffer(content));
 			return;
 		}
 
 		await this.ensureParentFolders(path);
-		await this.app.vault.createBinary(path, toArrayBuffer(content));
+		await this.vault.createBinary(path, toArrayBuffer(content));
 	}
 
 	private async ensureParentFolders(path: string): Promise<void> {
@@ -299,18 +315,18 @@ export class SyncExecutor {
 		let currentPath = '';
 		for (const part of parts) {
 			currentPath = currentPath ? `${currentPath}/${part}` : part;
-			const existing = this.app.vault.getAbstractFileByPath(currentPath);
+			const existing = await this.vault.getAbstractFileByPath(currentPath);
 			if (existing) {
-				if (!(existing instanceof TFolder)) {
+				if (!isVaultFolder(existing)) {
 					throw new Error(`Parent path is not a folder: ${currentPath}`);
 				}
 				continue;
 			}
 
 			try {
-				await this.app.vault.createFolder(currentPath);
+				await this.vault.createFolder(currentPath);
 			} catch (error) {
-				if (this.app.vault.getAbstractFileByPath(currentPath) instanceof TFolder) {
+				if (isVaultFolder(await this.vault.getAbstractFileByPath(currentPath))) {
 					continue;
 				}
 				throw error;
@@ -322,11 +338,19 @@ export class SyncExecutor {
 		return getVaultFileKind(path) === 'text' ? 'text/plain; charset=utf-8' : 'application/octet-stream';
 	}
 
-	private assertLocalUnchanged(item: SyncPlanItem, operation: string): void {
-		const file = this.app.vault.getAbstractFileByPath(item.path);
+	/**
+	 * Takes the entry the caller already looked up. For hidden paths every
+	 * lookup is a real adapter stat, so re-fetching here cost 2-3 duplicate
+	 * round-trips per plan item.
+	 */
+	private assertLocalUnchanged(
+		item: SyncPlanItem,
+		operation: string,
+		file: VaultEntry | null,
+	): void {
 
 		if (item.expectLocalAbsent) {
-			if (file instanceof TFile) {
+			if (isVaultFile(file)) {
 				throw new Error(`Local file ${item.path} appeared since planning. Skipping ${operation}.`);
 			}
 			return;
@@ -336,7 +360,7 @@ export class SyncExecutor {
 			return;
 		}
 
-		if (!(file instanceof TFile)) {
+		if (!isVaultFile(file)) {
 			throw new Error(`Local file ${item.path} changed since planning. Skipping ${operation}.`);
 		}
 

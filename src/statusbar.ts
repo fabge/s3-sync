@@ -113,7 +113,9 @@ export class StatusBar {
 	}
 
 	private getTooltipContent(): string {
-		const lines = ['Sync'];
+		const lines = [
+			this.syncState.status === 'conflicts' ? 'Click to list conflicts' : 'Click to sync',
+		];
 		lines.push(`Status: ${SYNC_STATUS_SPEC[this.syncState.status].label}`);
 
 		if (this.syncState.lastSyncTime) {

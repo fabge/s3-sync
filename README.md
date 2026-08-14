@@ -46,7 +46,8 @@ The settings surface is intentionally small:
 | **Sync interval** | Interval for auto-sync: 1, 2, 5, 10, 15, or 30 minutes. |
 | **Sync on startup** | Runs one sync after the vault finishes loading. |
 | **Abort if changed files exceed threshold** | Aborts sync when the share of already-synced files that would change exceeds the threshold. The first sync to a destination is exempt; use 100 to disable. |
-| **Exclude patterns** | One glob pattern per line for files or folders that should never be synced. |
+| **Exclude patterns** | One glob pattern per line for files or folders that should never be synced. Empty by default. The former defaults were `.trash/**`, now unreachable anyway, and `**/workspace*`, which was meant for `.obsidian/workspace.json` but could only ever match ordinary notes such as `projects/workspace-plan.md` — add it back yourself if you want that. |
+| **Sync hidden folders** | One glob per line opting dot-prefixed folders into sync, for example `.claude/**`. Empty by default. |
 | **Reset sync journal** | Clears remembered baselines for the current bucket and region so the next sync starts fresh against that destination. |
 
 The plugin always excludes its own folder from sync, including `data.json`:
@@ -56,6 +57,23 @@ The plugin always excludes its own folder from sync, including `data.json`:
 ```
 
 Git metadata under any `.git` path is also always excluded.
+
+### Hidden folders
+
+Obsidian's vault index never surfaces dot-prefixed files or folders, so by default they cannot sync at all. **Sync hidden folders** opts specific ones in:
+
+```text
+.claude/**
+.codex/**
+```
+
+Matching files are enumerated and transferred through the vault adapter rather than the vault API. They therefore sync as ordinary S3 objects while remaining invisible to Obsidian — they never become notes, never appear in search, and never enter the graph. This is the intended way to carry per-vault tooling config to machines that receive the vault only over S3.
+
+Every glob must name a concrete hidden root; a bare `**` or a visible folder is rejected, because discovering hidden files anywhere in the vault would mean walking the entire tree on every cycle. Patterns are accepted in exactly one shape — a concrete dot-prefixed folder followed by at least one more component, such as `.claude/**`. A bare `.claude`, a wildcard root, backslashes, and any `.` or `..` segment are refused with the correction in the message rather than repaired, because a pattern decides which files leave the machine. `.git`, `.trash`, `.obsidian-s3-sync` and the Obsidian config folder are refused at any depth, whatever the glob says: syncing a `.git` directory between machines corrupts repositories, and `.obsidian-s3-sync` is the plugin's own remote metadata namespace, which is stripped from every remote listing and would therefore be deleted locally on the next cycle.
+
+Two behaviours differ from ordinary notes. Remote deletions of hidden files always go to the vault's local `.trash` folder, because the adapter has no access to Obsidian's trash preference. And nesting is walked to a fixed depth of 16, which stops a symlinked folder from recursing forever.
+
+Note that this setting lives in `data.json`, which is itself never synced, so it has to be set once per device.
 
 ## Permissions and data access
 
@@ -75,7 +93,7 @@ This plugin is a sync tool, so by design it enumerates vault files and reads or 
 | :--- | :--- |
 | **S3 bucket root** | Synced vault files as normal S3 objects, plus content-fingerprint metadata. |
 | **Local vault** | Downloaded files, updated files, parent folders created as needed, and `LOCAL_` / `REMOTE_` conflict artifacts. |
-| **Local vault trash** | Files deleted remotely are removed through Obsidian's trash flow, respecting the user's deleted-files preference. |
+| **Local vault trash** | Files deleted remotely are removed through Obsidian's trash flow, respecting the user's deleted-files preference. Allowlisted hidden files are an exception and always go to the local `.trash` folder. |
 | **IndexedDB** | Per-file sync baselines, unresolved conflict records, and metadata such as the last successful sync time. |
 | **`data.json`** | Plugin settings such as AWS credentials, sync toggles, interval, threshold, and exclude patterns. |
 
@@ -90,9 +108,10 @@ This plugin is a sync tool, so by design it enumerates vault files and reads or 
 
 - No encryption layer. Objects are stored in S3 as plaintext payloads.
 - No access outside the current vault.
+- No raw filesystem access beyond Obsidian's own vault adapter, which is used only for paths matching a configured hidden-path glob.
 - No Node.js shell, filesystem, or Electron APIs.
 
-> **Important:** other files under `.obsidian/` are in scope unless you exclude them yourself. The default patterns exclude `workspace*` and `.trash/**`, but not every config file.
+> **Important:** nothing under `.obsidian/` is ever synced — not the config files, not other plugins' `data.json`, not the workspace. Obsidian's vault index does not expose dot-prefixed paths, and the config folder is additionally on the never-syncable list, so no exclude pattern is needed and no hidden-path glob can opt it back in.
 
 ## Conflict behavior
 
@@ -138,7 +157,7 @@ It is not recommended. Running two sync systems against the same files increases
 
 **What files are excluded by default?**
 
-The editable defaults are `**/workspace*` and `.trash/**`. Git metadata under any `.git` path and the plugin's own folder under `.obsidian/plugins/s3-sync/` are always excluded independently of these settings.
+There are no editable defaults — **Exclude patterns** starts empty. Independently of any setting, nothing dot-prefixed syncs unless a hidden-path glob opts it in, and `.git`, `.trash`, `.obsidian-s3-sync` and the Obsidian config folder (including this plugin's own `data.json`) can never be opted in at all.
 
 ## Development
 

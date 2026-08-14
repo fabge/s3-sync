@@ -12,6 +12,12 @@ export interface S3SyncSettings {
 	syncIntervalMinutes: SyncIntervalMinutes;
 	syncOnStartup: boolean;
 	excludePatterns: string[];
+	/**
+	 * Globs opting dot-prefixed paths into sync. Obsidian hides these from its
+	 * vault index, so they are enumerated and transferred through the vault
+	 * adapter and never become notes. Empty means no hidden path syncs.
+	 */
+	includeHiddenPaths: string[];
 	protectModifyPercentage: number;
 }
 
@@ -24,7 +30,8 @@ export const DEFAULT_SETTINGS: S3SyncSettings = {
 	autoSyncEnabled: false,
 	syncIntervalMinutes: 5,
 	syncOnStartup: false,
-	excludePatterns: ['**/workspace*', '.trash/**'],
+	excludePatterns: [],
+	includeHiddenPaths: [],
 	protectModifyPercentage: 50,
 };
 
@@ -32,6 +39,7 @@ export function cloneSettings(settings: S3SyncSettings): S3SyncSettings {
 	return {
 		...settings,
 		excludePatterns: [...settings.excludePatterns],
+		includeHiddenPaths: [...settings.includeHiddenPaths],
 	};
 }
 
@@ -135,4 +143,35 @@ export interface SyncState {
 export interface S3ObjectInfo {
 	key: string;
 	etag?: string;
+}
+
+/**
+ * Structural vault contract shared by the index-backed Obsidian vault and the
+ * adapter-backed access used for allowlisted hidden paths. The sync core
+ * depends on this instead of Obsidian's classes so neither path has to
+ * masquerade as the other.
+ */
+export interface VaultFile {
+	path: string;
+	stat: { mtime: number; size: number };
+}
+
+export interface VaultFolder {
+	path: string;
+}
+
+export type VaultEntry = VaultFile | VaultFolder;
+
+export interface VaultLike {
+	readonly configDir: string;
+	getFiles(): VaultFile[];
+	/** Allowlisted dot-prefixed files, which `getFiles` can never return. */
+	getHiddenFiles(patterns: string[]): Promise<VaultFile[]>;
+	getAbstractFileByPath(path: string): Promise<VaultEntry | null>;
+	readBinary(file: VaultFile): Promise<ArrayBuffer>;
+	modifyBinary(file: VaultFile, data: ArrayBuffer): Promise<void>;
+	createBinary(path: string, data: ArrayBuffer): Promise<void>;
+	createFolder(path: string): Promise<VaultFolder>;
+	rename(entry: VaultEntry, newPath: string): Promise<void>;
+	trashFile(file: VaultFile): Promise<void>;
 }

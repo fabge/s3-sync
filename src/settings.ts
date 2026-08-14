@@ -1,6 +1,7 @@
-import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
+import { App, Notice, PluginSettingTab, Setting, TextAreaComponent } from 'obsidian';
 import type S3SyncPlugin from './main';
 import { SyncIntervalMinutes } from './types';
+import { validateHiddenPatterns } from './vault/hiddenPaths';
 
 const SYNC_INTERVAL_NAMES: Record<SyncIntervalMinutes, string> = {
 	1: '1 minute',
@@ -12,8 +13,55 @@ const SYNC_INTERVAL_NAMES: Record<SyncIntervalMinutes, string> = {
 };
 
 export class S3SyncSettingTab extends PluginSettingTab {
+	private hiddenPathsField: TextAreaComponent | null = null;
+
 	constructor(app: App, private plugin: S3SyncPlugin) {
 		super(app, plugin);
+	}
+
+	/**
+	 * Blur alone is not enough: closing the modal while the field still has
+	 * focus would drop whatever was typed, so flush here as well.
+	 */
+	hide(): void {
+		const field = this.hiddenPathsField;
+		this.hiddenPathsField = null;
+		if (field) {
+			// Cannot be awaited from a synchronous lifecycle hook, so failures
+			// are surfaced here rather than becoming an unhandled rejection.
+			this.applyHiddenPaths(field).catch((error: unknown) => {
+				console.error('[S3 Sync] Could not save hidden paths:', error);
+				new Notice('Could not save hidden folder patterns.');
+			});
+		}
+		super.hide();
+	}
+
+	private async applyHiddenPaths(text: TextAreaComponent): Promise<void> {
+		const requested = text
+			.getValue()
+			.split('\n')
+			.map((pattern) => pattern.trim())
+			.filter((pattern) => pattern.length > 0);
+		const { accepted, rejected } = validateHiddenPatterns(requested, this.app.vault.configDir);
+		const unchanged = rejected.length === 0
+			&& accepted.length === this.plugin.settings.includeHiddenPaths.length
+			&& accepted.every((pattern, index) => pattern === this.plugin.settings.includeHiddenPaths[index]);
+		if (unchanged) return;
+
+		if (rejected.length > 0) {
+			new Notice(
+				'Ignored hidden path patterns:\n'
+				+ rejected.map((failure) => `${failure.pattern} — ${failure.reason}`).join('\n'),
+			);
+		}
+
+		// Rewritten so the field shows what is actually stored; otherwise a
+		// rejected line stays on screen looking as though it took effect.
+		text.setValue(accepted.join('\n'));
+		this.plugin.settings.includeHiddenPaths = accepted;
+		await this.plugin.saveSettings();
+		this.plugin.onSettingsChanged();
 	}
 
 	display(): void {
@@ -203,6 +251,29 @@ export class S3SyncSettingTab extends PluginSettingTab {
 						.filter((p) => p.length > 0);
 					await this.plugin.saveSettings();
 					this.plugin.onSettingsChanged();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName('Sync hidden folders')
+			.setDesc(
+				'One glob per line, each starting with a dot-prefixed folder (for example .claude/**). '
+				+ 'Obsidian hides these from its vault index, so they sync as plain files and never '
+				+ 'appear as notes. .git, .trash and the Obsidian config folder can never be added.',
+			)
+			.addTextArea((text) => {
+				this.hiddenPathsField = text;
+				text.setPlaceholder('.claude/**\n.codex/**');
+				text.setValue(this.plugin.settings.includeHiddenPaths.join('\n'));
+				text.inputEl.rows = 4;
+				// Validated on blur rather than per keystroke: a half-typed glob
+				// is not an error, and validating as you type both saves partial
+				// patterns and fires one notice per character.
+				text.inputEl.addEventListener('blur', () => {
+					this.applyHiddenPaths(text).catch((error: unknown) => {
+						console.error('[S3 Sync] Could not save hidden paths:', error);
+						new Notice('Could not save hidden folder patterns.');
+					});
 				});
 			});
 

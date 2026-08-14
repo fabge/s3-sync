@@ -4,7 +4,12 @@ function normalizePath(path: string): string {
     return path.replace(/\\/g, '/');
 }
 
-export function getFilename(path: string): string {
+/** Normalized path segments; the one place backslash handling lives. */
+export function pathSegments(path: string): string[] {
+    return normalizePath(path).split('/');
+}
+
+function getFilename(path: string): string {
     const normalized = normalizePath(path);
     const lastSlash = normalized.lastIndexOf('/');
     return lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized;
@@ -21,8 +26,11 @@ export function getExtension(path: string): string {
 const globRegexCache = new Map<string, RegExp>();
 
 /** `*` matches within a path segment; `**` matches across segments. */
-function matchGlob(path: string, pattern: string): boolean {
+function matchGlob(path: string, rawPattern: string): boolean {
     const normalized = normalizePath(path);
+    // Normalized on both sides: a pattern written with backslashes must behave
+    // like the equivalent forward-slash pattern, not silently match nothing.
+    const pattern = normalizePath(rawPattern);
 
     let regex = globRegexCache.get(pattern);
     if (!regex) {
@@ -45,17 +53,12 @@ export function matchesAnyGlob(path: string, patterns: string[]): boolean {
     return patterns.some((pattern) => matchGlob(path, pattern));
 }
 
-/** Must match the `id` in manifest.json. */
-const PLUGIN_ID = 's3-sync';
 
-/** Non-overridable exclusion for this plugin's own settings/credential files. */
-export function isPluginOwnPath(path: string, configDir: string): boolean {
-	const normalized = normalizePath(path);
-	const pluginDir = `${normalizePath(configDir)}/plugins/${PLUGIN_ID}/`;
-	return normalized.startsWith(pluginDir) || normalized === pluginDir.slice(0, -1);
-}
-
-/** Git owns every path segment named exactly `.git`; never sync its internals. */
-export function isGitInternalPath(path: string): boolean {
-	return normalizePath(path).split('/').includes('.git');
+/**
+ * Obsidian's vault index never surfaces dot-prefixed files or folders. Such
+ * paths only sync when explicitly allowlisted, and are then read and written
+ * through the vault adapter instead of the index-backed vault API.
+ */
+export function isHiddenPath(path: string): boolean {
+	return pathSegments(path).some((segment) => segment.startsWith('.'));
 }

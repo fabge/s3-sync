@@ -3,8 +3,7 @@
  * corrupt files; the text/binary kind only picks the upload content type.
  */
 
-import { TFile, Vault } from 'obsidian';
-import { VaultFileKind } from '../types';
+import { VaultFile, VaultFileKind, VaultLike } from '../types';
 import { getExtension } from './paths';
 
 const TEXT_FILE_EXTENSIONS = new Set([
@@ -43,7 +42,7 @@ export function getVaultFileKind(path: string): VaultFileKind {
     return TEXT_FILE_EXTENSIONS.has(extension) ? 'text' : 'binary';
 }
 
-export async function readVaultFile(vault: Vault, file: TFile): Promise<Uint8Array> {
+export async function readVaultFile(vault: VaultLike, file: VaultFile): Promise<Uint8Array> {
     return new Uint8Array(await vault.readBinary(file));
 }
 

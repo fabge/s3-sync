@@ -17,6 +17,7 @@ function createSettings(overrides: Partial<S3SyncSettings> = {}): S3SyncSettings
 		syncIntervalMinutes: 5,
 		syncOnStartup: false,
 		excludePatterns: [],
+		includeHiddenPaths: [],
 		protectModifyPercentage: 100,
 		...overrides,
 	};

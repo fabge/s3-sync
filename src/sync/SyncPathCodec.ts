@@ -1,7 +1,7 @@
 /** Converts between vault paths and bucket-root S3 keys. */
 
 // Hidden dir (dot-prefixed) for plugin-internal objects; detected by isMetadataKey().
-const METADATA_DIR = '.obsidian-s3-sync';
+export const METADATA_DIR = '.obsidian-s3-sync';
 
 /** Vault paths are already normalized (forward slashes, no leading slash). */
 export function localToRemote(localPath: string): string {

@@ -2,6 +2,7 @@ jest.mock('obsidian');
 
 import { TFile, Vault } from 'obsidian';
 import { getVaultFileKind, readVaultFile, toArrayBuffer } from '../../src/utils/vaultFiles';
+import { VaultLike } from '../../src/types';
 
 class MockTFile extends TFile {}
 
@@ -34,7 +35,7 @@ describe('vaultFiles', () => {
             const readSpy = jest.spyOn(vault, 'read');
             const binarySpy = jest.spyOn(vault, 'readBinary').mockResolvedValue(bytes.buffer);
 
-            const result = await readVaultFile(vault, file);
+            const result = await readVaultFile(vault as unknown as VaultLike, file);
 
             expect(result).toBeInstanceOf(Uint8Array);
             expect(Array.from(result)).toEqual([1, 2, 3, 4]);

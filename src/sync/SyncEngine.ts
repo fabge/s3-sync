@@ -1,7 +1,6 @@
 /** Thin sync-cycle orchestrator; planner/executor do the heavy lifting. */
 
-import { App } from 'obsidian';
-import { cloneSettings, S3SyncSettings, SyncPlanItem, SyncResult } from '../types';
+import { cloneSettings, S3SyncSettings, SyncPlanItem, SyncResult, VaultLike } from '../types';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
 import { SyncPlanner } from './SyncPlanner';
@@ -25,7 +24,7 @@ export class SyncEngine {
 	private settings: S3SyncSettings;
 
 	constructor(
-		private app: App,
+		private vault: VaultLike,
 		private s3Provider: S3Provider,
 		private journal: SyncJournal,
 		settings: S3SyncSettings,
@@ -64,7 +63,7 @@ export class SyncEngine {
 			}
 
 			const planner = new SyncPlanner(
-				this.app,
+				this.vault,
 				this.s3Provider,
 				this.journal,
 				this.settings,
@@ -86,7 +85,7 @@ export class SyncEngine {
 			}
 
 			const executor = new SyncExecutor(
-				this.app,
+				this.vault,
 				this.s3Provider,
 				this.journal,
 			);

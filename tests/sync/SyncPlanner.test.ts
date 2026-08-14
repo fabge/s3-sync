@@ -1,4 +1,5 @@
 import { App, TFile, Vault } from 'obsidian';
+import { VaultEntry, VaultFile, VaultLike } from '../../src/types';
 import { SyncPlanner } from '../../src/sync/SyncPlanner';
 import {
 	ConflictRecord,
@@ -152,6 +153,8 @@ function getPlannerPrivate(planner: SyncPlanner): SyncPlannerPrivate {
 describe('SyncPlanner', () => {
 	let app: App;
 	let vault: VaultWithAddFile;
+	let vaultPort: VaultLike;
+	let hiddenFiles: VaultFile[];
 	let settings: S3SyncSettings;
 	let s3Provider: MockS3Provider;
 	let journal: MockSyncJournal;
@@ -164,7 +167,7 @@ describe('SyncPlanner', () => {
 	function createPlanner(overrides: Partial<S3SyncSettings> = {}): SyncPlanner {
 		settings = createSettings(overrides);
 		return new SyncPlanner(
-			app,
+			vaultPort,
 			s3Provider as unknown as S3Provider,
 			journal as unknown as SyncJournal,
 			settings,
@@ -185,6 +188,23 @@ describe('SyncPlanner', () => {
 		app = new App();
 		vault = new Vault() as VaultWithAddFile;
 		app.vault = vault;
+		hiddenFiles = [];
+
+		// Mirrors the shape the plugin's Obsidian adapter builds: index-backed
+		// files from getFiles, allowlisted hidden files from getHiddenFiles.
+		vaultPort = {
+			configDir: '.obsidian',
+			getFiles: () => vault.getFiles() as unknown as VaultFile[],
+			getHiddenFiles: () => Promise.resolve(hiddenFiles),
+			getAbstractFileByPath: (path: string) =>
+				Promise.resolve((vault.getAbstractFileByPath?.(path) ?? null) as VaultEntry | null),
+			readBinary: (file) => vault.readBinary(file as unknown as TFile),
+			modifyBinary: (file, data) => vault.modifyBinary(file as unknown as TFile, data),
+			createBinary: async (path, data) => { await vault.createBinary(path, data); },
+			createFolder: (path) => vault.createFolder(path),
+			rename: (entry, newPath) => vault.rename(entry as unknown as TFile, newPath),
+			trashFile: () => Promise.resolve(),
+		};
 
 		s3Provider = {
 			listObjects: jest.fn(),
@@ -503,23 +523,94 @@ describe('SyncPlanner', () => {
 		});
 
 		it('excludes local, remote, and baseline entries that match exclusion rules', async () => {
-			planner = createPlanner();
+			// Covers both routes: the never-syncable rule and a configured glob.
+			planner = createPlanner({ excludePatterns: ['archive/**'] });
 			addVaultFile('.trash/local.md');
+			addVaultFile('archive/local.md');
 			addVaultFile('folder/.obsidian-s3-sync-hidden.md');
 			s3Provider.listObjects.mockResolvedValue([
 				createRemoteObject({ key: '.trash/remote.md' }),
+				createRemoteObject({ key: 'archive/remote.md' }),
 				createRemoteObject({ key: 'folder/.obsidian-s3-sync-remote.md' }),
 			]);
 			journal.getAllStateRecords.mockResolvedValue([
 				createStateRecord({ path: '.trash/baseline.md' }),
+				createStateRecord({ path: 'archive/baseline.md' }),
 			]);
 
 			const contexts = await getPlannerPrivate(planner).discoverState();
 
 			expect(contexts.size).toBe(0);
 			expect(contexts.has('.trash/local.md')).toBe(false);
+			expect(contexts.has('archive/local.md')).toBe(false);
+			expect(contexts.has('archive/remote.md')).toBe(false);
+			expect(contexts.has('archive/baseline.md')).toBe(false);
 			expect(contexts.has('folder/.obsidian-s3-sync-hidden.md')).toBe(false);
 			expect(contexts.has('.trash/baseline.md')).toBe(false);
+		});
+
+		// The port returns everything under an allowlisted root, so an artifact
+		// is enumerated whether or not the user's glob matches its
+		// LOCAL_/REMOTE_ filename.
+		it('sees a hidden conflict artifact the glob does not match', async () => {
+			journal.getAllConflicts.mockResolvedValue([{
+				path: '.claude/skills/SKILL.md',
+				mode: 'both',
+				localArtifactPath: '.claude/skills/LOCAL_SKILL.md',
+			}]);
+			hiddenFiles = [{ path: '.claude/skills/LOCAL_SKILL.md', stat: { mtime: 1, size: 1 } }];
+			planner = createPlanner({ includeHiddenPaths: ['.claude/**/SKILL.md'] });
+
+			const contexts = await getPlannerPrivate(planner).discoverState();
+
+			expect(contexts.get('.claude/skills/SKILL.md')?.hasConflictArtifacts).toBe(true);
+		});
+
+		it('keeps enumerating a hidden root while it contains unresolved conflict artifacts', async () => {
+			journal.getAllConflicts.mockResolvedValue([{
+				path: '.claude/skills/SKILL.md',
+				mode: 'both',
+				localArtifactPath: '.claude/skills/LOCAL_SKILL.md',
+				remoteArtifactPath: '.claude/skills/REMOTE_SKILL.md',
+			}]);
+			vaultPort.getHiddenFiles = jest.fn(async (patterns: string[]) =>
+				patterns.includes('.claude/**')
+					? [{ path: '.claude/skills/LOCAL_SKILL.md', stat: { mtime: 1, size: 1 } }]
+					: []);
+			planner = createPlanner({ includeHiddenPaths: [] });
+
+			const contexts = await getPlannerPrivate(planner).discoverState();
+
+			expect(vaultPort.getHiddenFiles).toHaveBeenCalledWith(['.claude/**']);
+			expect(contexts.get('.claude/skills/SKILL.md')?.hasConflictArtifacts).toBe(true);
+		});
+
+		it('plans allowlisted hidden files alongside index-backed files', async () => {
+			addVaultFile('notes/visible.md');
+			hiddenFiles = [{
+				path: '.claude/skills/qmd/SKILL.md',
+				stat: { mtime: 100, size: 12 },
+			}];
+			planner = createPlanner({ includeHiddenPaths: ['.claude/**'] });
+
+			const contexts = await getPlannerPrivate(planner).discoverState();
+
+			expect([...contexts.keys()].sort()).toEqual([
+				'.claude/skills/qmd/SKILL.md',
+				'notes/visible.md',
+			]);
+		});
+
+		it('drops hidden files that the allowlist does not cover', async () => {
+			hiddenFiles = [{
+				path: '.codex/skills/qmd/SKILL.md',
+				stat: { mtime: 100, size: 12 },
+			}];
+			planner = createPlanner({ includeHiddenPaths: ['.claude/**'] });
+
+			const contexts = await getPlannerPrivate(planner).discoverState();
+
+			expect([...contexts.keys()]).toEqual([]);
 		});
 
 		it('keeps conflict records for excluded paths so they can still resolve', async () => {
@@ -598,7 +689,7 @@ describe('SyncPlanner', () => {
 			});
 
 			expect(result).toBe('L=');
-			expect(mockedReadVaultFile).toHaveBeenCalledWith(vault, file);
+			expect(mockedReadVaultFile).toHaveBeenCalledWith(vaultPort, file);
 			expect(mockedFingerprint).toHaveBeenCalledWith(encode('hello world'));
 		});
 
@@ -774,12 +865,35 @@ describe('SyncPlanner', () => {
 	});
 
 	describe('shouldExclude', () => {
-		it('always excludes Git metadata but not normal Git-related files', () => {
+		// Obsidian's index cannot see dot-prefixed paths, so they are excluded
+		// unless a hidden-path glob opts them in explicitly.
+		it('excludes dot-prefixed paths unless they are allowlisted', () => {
 			expect(getPlannerPrivate(planner).shouldExclude('.git')).toBe(true);
 			expect(getPlannerPrivate(planner).shouldExclude('.git/config')).toBe(true);
 			expect(getPlannerPrivate(planner).shouldExclude('nested/.git/index')).toBe(true);
-			expect(getPlannerPrivate(planner).shouldExclude('.gitignore')).toBe(false);
-			expect(getPlannerPrivate(planner).shouldExclude('.github/workflows/test.yml')).toBe(false);
+			expect(getPlannerPrivate(planner).shouldExclude('.gitignore')).toBe(true);
+			expect(getPlannerPrivate(planner).shouldExclude('.claude/skills/qmd/SKILL.md')).toBe(true);
+			expect(getPlannerPrivate(planner).shouldExclude('notes/regular.md')).toBe(false);
+
+			const allowlisted = createPlanner({ includeHiddenPaths: ['.claude/**'] });
+			expect(getPlannerPrivate(allowlisted).shouldExclude('.claude/skills/qmd/SKILL.md')).toBe(false);
+			expect(getPlannerPrivate(allowlisted).shouldExclude('.codex/skills/qmd/SKILL.md')).toBe(true);
+		});
+
+		// A glob is user input, so the never-syncable list is enforced here
+		// rather than only where patterns are entered in settings.
+		it('never lets an allowlist reach Git, trash, the config dir, or plugin metadata', () => {
+			const wideOpen = createPlanner({ includeHiddenPaths: ['.claude/**', '.git/**', '.obsidian-s3-sync/**'] });
+			const excluded = (path: string): boolean => getPlannerPrivate(wideOpen).shouldExclude(path);
+
+			expect(excluded('.git/config')).toBe(true);
+			expect(excluded('.obsidian-s3-sync/state.json')).toBe(true);
+			expect(excluded('.obsidian/appearance.json')).toBe(true);
+			// Nested under an allowlisted root, which the pattern does match.
+			expect(excluded('.claude/.git/config')).toBe(true);
+			expect(excluded('.claude/.trash/old.md')).toBe(true);
+			expect(excluded('.claude/.obsidian-s3-sync/state.json')).toBe(true);
+			expect(excluded('.claude/skills/qmd/SKILL.md')).toBe(false);
 		});
 
 		it('does not globally exclude LOCAL_ and REMOTE_ filenames', () => {
@@ -791,8 +905,18 @@ describe('SyncPlanner', () => {
 			expect(getPlannerPrivate(planner).shouldExclude('folder/.obsidian-s3-sync-log.json')).toBe(true);
 		});
 
+		// Uses a visible path: with the defaults now empty, asserting on
+		// .trash/ would pass through the never-syncable rule and this test
+		// would keep passing even if glob exclusion stopped working entirely.
 		it('excludes files that match the configured glob patterns', () => {
-			expect(getPlannerPrivate(planner).shouldExclude('.trash/file.md')).toBe(true);
+			const configured = createPlanner({ excludePatterns: ['archive/**', '**/*.tmp'] });
+			const excluded = (path: string): boolean => getPlannerPrivate(configured).shouldExclude(path);
+
+			expect(excluded('archive/old.md')).toBe(true);
+			expect(excluded('archive/deep/older.md')).toBe(true);
+			expect(excluded('notes/scratch.tmp')).toBe(true);
+			expect(excluded('notes/keep.md')).toBe(false);
+			expect(excluded('archived/not-matched.md')).toBe(false);
 		});
 
 		it('does not exclude ordinary files', () => {

@@ -19,6 +19,8 @@ jest.mock('../../src/utils/vaultFiles', () => ({
 }));
 
 import { App, FileStats, TFile, TFolder, Vault } from 'obsidian';
+import { VaultEntry, VaultLike } from '../../src/types';
+import { createFakeVault } from '../helpers/vaultPort';
 import { SyncExecutor } from '../../src/sync/SyncExecutor';
 import {
 	ConflictRecord,
@@ -66,6 +68,7 @@ class TestTFolder extends TFolder {
 
 interface VaultWithMocks {
 	getAbstractFileByPath: jest.Mock<TFile | TFolder | null, [string]>;
+	readBinary: jest.Mock<Promise<ArrayBuffer>, [TFile]>;
 	rename: jest.Mock<Promise<void>, [TFile, string]>;
 	createFolder: jest.Mock<Promise<TFolder>, [string]>;
 	createBinary: jest.Mock<Promise<TFile>, [string, ArrayBuffer]>;
@@ -116,6 +119,7 @@ interface ExecutorInternals {
 
 interface ExecutorContext {
 	app: AppWithMocks;
+	vaultPort: VaultLike;
 	vaultEntries: Map<string, TFile | TFolder>;
 	s3Provider: MockS3Provider;
 	journal: MockJournal;
@@ -206,6 +210,7 @@ function createExecutorContext(): ExecutorContext {
 	const vaultEntries = new Map<string, TFile | TFolder>();
 	const vault = new Vault() as unknown as VaultWithMocks;
 	vault.getAbstractFileByPath = jest.fn((path: string) => vaultEntries.get(path) ?? null);
+	vault.readBinary = jest.fn((_file: TFile) => Promise.resolve(new ArrayBuffer(0)));
 	vault.create = jest.fn(async (path: string, data: string) => {
 		const file = new TestTFile(path, data);
 		vaultEntries.set(path, file);
@@ -264,8 +269,25 @@ function createExecutorContext(): ExecutorContext {
 		getAllConflicts: jest.fn().mockResolvedValue([]),
 	};
 
+	// The executor now depends on the structural vault port rather than App,
+	// so the mocks above are exposed through the same shape the plugin adapter
+	// builds. Assertions keep targeting the underlying vault/fileManager mocks.
+	const vaultPort: VaultLike = {
+		configDir: '.obsidian',
+		getFiles: () => [],
+		getHiddenFiles: () => Promise.resolve([]),
+		getAbstractFileByPath: (path: string) =>
+			Promise.resolve(vault.getAbstractFileByPath(path) as VaultEntry | null),
+		readBinary: (file) => vault.readBinary(file as unknown as TFile),
+		modifyBinary: (file, data) => vault.modifyBinary(file as unknown as TFile, data),
+		createBinary: async (path, data) => { await vault.createBinary(path, data); },
+		createFolder: (path) => vault.createFolder(path),
+		rename: (entry, newPath) => vault.rename(entry as unknown as TFile, newPath),
+		trashFile: (file) => app.fileManager.trashFile(file as unknown as TFile),
+	};
+
 	const executor = new SyncExecutor(
-		app as unknown as App,
+		vaultPort,
 		s3Provider as never,
 		journal as never,
 	);
@@ -274,6 +296,7 @@ function createExecutorContext(): ExecutorContext {
 
 	return {
 		app,
+		vaultPort,
 		vaultEntries,
 		s3Provider,
 		journal,
@@ -513,7 +536,7 @@ describe('SyncExecutor', () => {
 
 	describe('executeAdopt', () => {
 		it('adopts the current local and remote baseline and clears conflicts', async () => {
-			const { internals, app, addFile, s3Provider, journal } = createExecutorContext();
+			const { internals, app, vaultPort, addFile, s3Provider, journal } = createExecutorContext();
 			const file = addFile('notes/test.md', 'local body', { mtime: 321, size: 10 });
 			s3Provider.headObject.mockResolvedValue(createHeadResult());
 			app.vault.getAbstractFileByPath.mockReturnValue(file);
@@ -523,7 +546,7 @@ describe('SyncExecutor', () => {
 			await internals.executeAdopt(createPlanItem('adopt'));
 
 			expect(s3Provider.headObject).toHaveBeenCalledWith('notes/test.md');
-			expect(mockedReadVaultFile).toHaveBeenCalledWith(app.vault, file);
+			expect(mockedReadVaultFile).toHaveBeenCalledWith(vaultPort, file);
 			expect(mockedFingerprint).toHaveBeenCalledWith(encode('local body'));
 			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',
@@ -588,7 +611,7 @@ describe('SyncExecutor', () => {
 
 	describe('executeUpload', () => {
 		it('uploads a local file with If-None-Match when the remote must be absent', async () => {
-			const { internals, app, addFile, s3Provider, journal } = createExecutorContext();
+			const { internals, app, vaultPort, addFile, s3Provider, journal } = createExecutorContext();
 			const file = addFile('notes/test.md', 'upload me', { mtime: 444, size: 9 });
 			app.vault.getAbstractFileByPath.mockReturnValue(file);
 			mockedReadVaultFile.mockResolvedValue(encode('upload me'));
@@ -597,7 +620,7 @@ describe('SyncExecutor', () => {
 
 			await internals.executeUpload(createPlanItem('upload', { expectRemoteAbsent: true }));
 
-			expect(mockedReadVaultFile).toHaveBeenCalledWith(app.vault, file);
+			expect(mockedReadVaultFile).toHaveBeenCalledWith(vaultPort, file);
 			expect(mockedFingerprint).toHaveBeenCalledWith(encode('upload me'));
 			expect(s3Provider.uploadFile).toHaveBeenCalledWith('notes/test.md', new TextEncoder().encode('upload me'), {
 				contentType: 'text/plain; charset=utf-8',
@@ -684,7 +707,7 @@ describe('SyncExecutor', () => {
 			}));
 
 			expect(s3Provider.downloadFileWithMetadata).toHaveBeenCalledWith('notes/test.md');
-			expect(writeSpy).toHaveBeenCalledWith('notes/test.md', encode('hello world'));
+			expect(writeSpy.mock.calls[0]?.slice(0, 2)).toEqual(['notes/test.md', encode('hello world')]);
 			expect(mockedFingerprint).toHaveBeenCalledWith(encode('hello world'));
 			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',
@@ -711,7 +734,7 @@ describe('SyncExecutor', () => {
 				expectedLocalSize: 3,
 			}));
 
-			expect(writeSpy).toHaveBeenCalledWith('notes/test.png', plaintext);
+			expect(writeSpy.mock.calls[0]?.slice(0, 2)).toEqual(['notes/test.png', plaintext]);
 			expect(mockedFingerprint).toHaveBeenCalledWith(plaintext);
 		});
 
@@ -756,6 +779,76 @@ describe('SyncExecutor', () => {
 			app.vault.getAbstractFileByPath.mockReturnValue(null);
 
 			await expect(internals.executeDownload(createPlanItem('download'))).rejects.toThrow('Downloaded file not found in vault: notes/test.md');
+		});
+	});
+
+	// Routed through a port that actually separates hidden storage from the
+	// index, so these fail if the executor ever stops going through the port.
+	describe('hidden paths', () => {
+		function createHiddenContext() {
+			const index = new Map<string, VaultEntry>();
+			const vault = createFakeVault(index);
+			const s3Provider: MockS3Provider = {
+				headObject: jest.fn(),
+				uploadFile: jest.fn(),
+				downloadFileWithMetadata: jest.fn(),
+				deleteFile: jest.fn(),
+			};
+			const journal: MockJournal = {
+				setStateRecord: jest.fn().mockResolvedValue(undefined),
+				deleteStateRecord: jest.fn().mockResolvedValue(undefined),
+				setConflict: jest.fn().mockResolvedValue(undefined),
+				deleteConflict: jest.fn().mockResolvedValue(undefined),
+				getAllConflicts: jest.fn().mockResolvedValue([]),
+			};
+			const executor = new SyncExecutor(vault, s3Provider as never, journal as never);
+			return {
+				vault,
+				s3Provider,
+				journal,
+				internals: executor as unknown as ExecutorInternals,
+			};
+		}
+
+		it('writes a downloaded hidden file through the adapter route', async () => {
+			const { internals, vault, s3Provider, journal } = createHiddenContext();
+			s3Provider.downloadFileWithMetadata.mockResolvedValue({
+				content: encode('skill body'),
+				etag: 'remote-etag',
+			});
+			mockedFingerprint.mockResolvedValue('hidden-fingerprint');
+
+			await internals.executeDownload(createPlanItem('download', {
+				path: '.claude/skills/qmd/SKILL.md',
+				expectLocalAbsent: true,
+			}));
+
+			expect(vault.hiddenWrites).toEqual(['.claude/skills/qmd/SKILL.md']);
+			expect(journal.setStateRecord).toHaveBeenCalledWith(expect.objectContaining({
+				path: '.claude/skills/qmd/SKILL.md',
+				contentFingerprint: 'hidden-fingerprint',
+			}));
+		});
+
+		it('trashes a remotely deleted hidden file through the adapter route', async () => {
+			const { internals, vault, journal } = createHiddenContext();
+			vault.addHidden('.claude/skills/qmd/SKILL.md');
+
+			await internals.executeDeleteLocal(createPlanItem('delete-local', {
+				path: '.claude/skills/qmd/SKILL.md',
+			}));
+
+			expect(vault.hiddenTrashed).toEqual(['.claude/skills/qmd/SKILL.md']);
+			expect(journal.deleteStateRecord).toHaveBeenCalledWith('.claude/skills/qmd/SKILL.md');
+		});
+
+		it('does not resolve a hidden path from the visible index', async () => {
+			const { internals, vault } = createHiddenContext();
+
+			await expect(internals.executeUpload(createPlanItem('upload', {
+				path: '.claude/skills/qmd/SKILL.md',
+			}))).rejects.toThrow('File not found for upload');
+			expect(vault.hiddenWrites).toEqual([]);
 		});
 	});
 
@@ -835,7 +928,7 @@ describe('SyncExecutor', () => {
 			}));
 
 			expect(app.vault.rename).toHaveBeenCalledWith(file, 'notes/LOCAL_test.md');
-			expect(writeSpy).toHaveBeenCalledWith('notes/REMOTE_test.md', encode('remote body'));
+			expect(writeSpy.mock.calls[0]?.slice(0, 2)).toEqual(['notes/REMOTE_test.md', encode('remote body')]);
 			expect(journal.setConflict).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'notes/test.md',
 				mode: 'both',
@@ -920,7 +1013,7 @@ describe('SyncExecutor', () => {
 			}));
 
 			expect(app.vault.rename).not.toHaveBeenCalled();
-			expect(writeSpy).toHaveBeenCalledWith('images/REMOTE_test.png', new Uint8Array([7, 8, 9]));
+			expect(writeSpy.mock.calls[0]?.slice(0, 2)).toEqual(['images/REMOTE_test.png', new Uint8Array([7, 8, 9])]);
 			expect(journal.setConflict).toHaveBeenCalledWith(expect.objectContaining({
 				path: 'images/test.png',
 				mode: 'remote-only',
