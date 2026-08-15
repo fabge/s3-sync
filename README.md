@@ -174,7 +174,9 @@ This repo is laid out in a BRAT-friendly way: the release assets BRAT needs are 
 
 A GitHub Actions workflow at `.github/workflows/release.yml` automates that release flow:
 
-1. bump `manifest.json` to the version you want to ship
+Commits on `main` are not delivered to installed BRAT copies by themselves. After changes are ready, publish a new version before expecting Obsidian to receive them.
+
+1. bump `manifest.json`, `package.json`, and `package-lock.json` to the version you want to ship
 2. create and push a matching tag, for example `0.1.1` or `v0.1.1`
 3. the workflow will lint, test, build, create a GitHub release, and attach:
    - `manifest.json`
