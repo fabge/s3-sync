@@ -1,15 +1,12 @@
 /** The hidden-path allowlist and the paths it may never reach. */
 
 import { pathSegments } from '../utils/paths';
-import { METADATA_DIR } from '../sync/SyncPathCodec';
 
 /**
  * Refused at any depth, whatever the allowlist says. A synced `.git` directory
- * corrupts repositories; `.trash` is Obsidian's deletion staging; the metadata
- * namespace is stripped from every remote listing, so syncing it would upload
- * a file the next cycle reads as remotely deleted and trashes.
+ * corrupts repositories and `.trash` is Obsidian's deletion staging.
  */
-const NEVER_SYNCABLE = ['.git', '.trash', METADATA_DIR];
+const NEVER_SYNCABLE = ['.git', '.trash'];
 
 export interface HiddenPatternResult {
 	accepted: string[];

@@ -43,8 +43,6 @@ export function cloneSettings(settings: S3SyncSettings): S3SyncSettings {
 	};
 }
 
-export type VaultFileKind = 'text' | 'binary';
-
 export type SyncAction =
 	| 'skip'
 	| 'adopt'
@@ -84,8 +82,6 @@ export interface SyncPlanItem {
 }
 
 export interface SyncResult {
-	success: boolean;
-	startedAt: number;
 	completedAt: number;
 	filesUploaded: number;
 	filesDownloaded: number;

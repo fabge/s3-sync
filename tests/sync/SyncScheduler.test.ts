@@ -38,8 +38,6 @@ function createSettings(overrides: Partial<S3SyncSettings> = {}): S3SyncSettings
 
 function createSyncResult(overrides: Partial<SyncResult> = {}): SyncResult {
 	return {
-		success: true,
-		startedAt: 100,
 		completedAt: 200,
 		filesUploaded: 1,
 		filesDownloaded: 0,
@@ -79,7 +77,6 @@ function createSchedulerContext(overrides: Partial<S3SyncSettings> = {}): Schedu
 describe('SyncScheduler', () => {
 	let setIntervalSpy: jest.SpiedFunction<typeof globalThis.setInterval>;
 	let clearIntervalSpy: jest.SpiedFunction<typeof globalThis.clearInterval>;
-	let consoleErrorSpy: jest.SpiedFunction<typeof console.error>;
 
 	beforeEach(() => {
 		jest.useFakeTimers();
@@ -92,13 +89,11 @@ describe('SyncScheduler', () => {
 		});
 		setIntervalSpy = jest.spyOn(globalThis, 'setInterval');
 		clearIntervalSpy = jest.spyOn(globalThis, 'clearInterval');
-		consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 	});
 
 	afterEach(() => {
 		setIntervalSpy.mockRestore();
 		clearIntervalSpy.mockRestore();
-		consoleErrorSpy.mockRestore();
 		jest.useRealTimers();
 	});
 
@@ -192,7 +187,7 @@ describe('SyncScheduler', () => {
 	});
 
 	/**
-	 * Verifies callback ordering, error forwarding, and triggerSync return values.
+	 * Verifies callback ordering and triggerSync return values.
 	 */
 	describe('triggerSync callbacks', () => {
 		it('calls onSyncStart before syncing and onSyncComplete after a successful sync', async () => {
@@ -216,20 +211,6 @@ describe('SyncScheduler', () => {
 			await scheduler.triggerSync();
 
 			expect(events).toEqual(['start', 'sync', 'complete:2']);
-		});
-
-		it('calls onSyncError when the sync engine throws an exception', async () => {
-			const { scheduler, syncEngineMocks } = createSchedulerContext();
-			const onSyncError = jest.fn<void, [string]>();
-			syncEngineMocks.sync.mockRejectedValue(new Error('Sync exploded'));
-
-			scheduler.setCallbacks({ onSyncError });
-
-			const result = await scheduler.triggerSync();
-
-			expect(result).toBeNull();
-			expect(onSyncError).toHaveBeenCalledTimes(1);
-			expect(onSyncError).toHaveBeenCalledWith('Sync exploded');
 		});
 
 		it('returns the SyncResult on success and null when the sync is skipped', async () => {

@@ -14,12 +14,11 @@ import {
 	SyncStateRecord,
 } from '../types';
 import { normalizeEntityTag } from '../utils/etags';
-import { isHiddenPath, matchesAnyGlob, pathSegments } from '../utils/paths';
+import { isHiddenPath, matchesAnyGlob, pathSegments, remoteToLocal } from '../utils/paths';
 import { isNeverSyncable } from '../vault/hiddenPaths';
 import { readVaultFile } from '../utils/vaultFiles';
 import { fingerprint } from '../utils/fingerprint';
 import { SyncJournal } from './SyncJournal';
-import { isMetadataKey, localToRemote, remoteToLocal } from './SyncPathCodec';
 import { S3Provider } from '../storage/S3Provider';
 import { decide } from './SyncDecisionTable';
 
@@ -169,8 +168,6 @@ export class SyncPlanner {
 		}
 
 		for (const obj of remoteObjects) {
-			if (isMetadataKey(obj.key)) continue;
-
 			const localPath = remoteToLocal(obj.key);
 			if (!localPath || this.shouldExclude(localPath)) continue;
 
@@ -226,10 +223,8 @@ export class SyncPlanner {
 		if (ctx.remoteFingerprint) return;
 		if (!ctx.remote) return;
 
-		const remoteKey = localToRemote(ctx.path);
-
 		if (!ctx.remote.head) {
-			ctx.remote.head = (await this.s3Provider.headObject(remoteKey)) ?? undefined;
+			ctx.remote.head = (await this.s3Provider.headObject(ctx.path)) ?? undefined;
 		}
 
 		if (ctx.remote.head?.fingerprint) {
@@ -237,7 +232,7 @@ export class SyncPlanner {
 			return;
 		}
 
-		const downloaded = await this.s3Provider.downloadFileWithMetadata(remoteKey);
+		const downloaded = await this.s3Provider.downloadFileWithMetadata(ctx.path);
 		if (!downloaded) return;
 		ctx.remoteFingerprint = await fingerprint(downloaded.content);
 	}

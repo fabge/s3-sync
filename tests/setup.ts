@@ -10,7 +10,7 @@ import crypto from 'crypto';
 global.TextEncoder = TextEncoder;
 global.TextDecoder = TextDecoder as typeof global.TextDecoder;
 
-// Polyfill crypto for Node.js tests (used by `crypto.subtle.digest` in SyncPayloadCodec).
+// Polyfill crypto for content fingerprint tests.
 Object.defineProperty(global, 'crypto', {
     value: {
         getRandomValues: (arr: Uint8Array) => crypto.randomFillSync(arr),

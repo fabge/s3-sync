@@ -98,8 +98,6 @@ function createPlan(
 
 function createSyncResult(overrides: Partial<SyncResult> = {}): SyncResult {
 	return {
-		success: true,
-		startedAt: 100,
 		completedAt: 200,
 		filesUploaded: 0,
 		filesDownloaded: 0,
@@ -200,7 +198,7 @@ describe('SyncEngine', () => {
 
 			const result = await context.engine.sync();
 
-			expect(result.success).toBe(false);
+			expect(result.errors).not.toHaveLength(0);
 			expect(context.engine.isInProgress()).toBe(false);
 		});
 
@@ -215,30 +213,6 @@ describe('SyncEngine', () => {
 
 			executeDeferred.resolve(createSyncResult());
 			await syncPromise;
-
-			expect(context.engine.isInProgress()).toBe(false);
-		});
-	});
-
-	describe('in-progress guard', () => {
-		it('reports in-progress during a sync and clears it afterward', async () => {
-			const context = createEngineContext();
-			const plannerDeferred = createDeferred<SyncPlan>();
-			context.planner.buildPlan.mockReturnValueOnce(plannerDeferred.promise);
-
-			const syncPromise = context.engine.sync();
-			expect(context.engine.isInProgress()).toBe(true);
-
-			plannerDeferred.resolve(createPlan());
-			await syncPromise;
-			expect(context.engine.isInProgress()).toBe(false);
-		});
-
-		it('clears the in-progress flag when sync fails', async () => {
-			const context = createEngineContext();
-			context.planner.buildPlan.mockRejectedValueOnce(new Error('planner exploded'));
-
-			await context.engine.sync();
 
 			expect(context.engine.isInProgress()).toBe(false);
 		});
@@ -319,7 +293,7 @@ describe('SyncEngine', () => {
 
 			const result = await context.engine.sync();
 
-			expect(result.success).toBe(false);
+			expect(result.errors).not.toHaveLength(0);
 			expect(context.journal.setMetadata).not.toHaveBeenCalled();
 			consoleErrorSpy.mockRestore();
 		});
@@ -349,7 +323,7 @@ describe('SyncEngine', () => {
 
 			const result = await context.engine.sync();
 
-			expect(result.success).toBe(false);
+			expect(result.errors).not.toHaveLength(0);
 			expect(result.errors[0]?.recoverable).toBe(false);
 			expect(result.errors[0]?.message).toContain('Reset sync journal');
 			expect(context.planner.buildPlan).not.toHaveBeenCalled();
@@ -370,7 +344,7 @@ describe('SyncEngine', () => {
 
 			const result = await syncPromise;
 
-			expect(result.success).toBe(true);
+			expect(result.errors).toEqual([]);
 			expect(context.executor.execute).toHaveBeenCalledTimes(1);
 		});
 
@@ -384,7 +358,7 @@ describe('SyncEngine', () => {
 
 			const result = await context.engine.sync();
 
-			expect(result.success).toBe(false);
+			expect(result.errors).not.toHaveLength(0);
 			expect(result.errors[0]?.recoverable).toBe(false);
 			expect(result.errors[0]?.message).toContain('protection threshold');
 			expect(context.executor.execute).not.toHaveBeenCalled();
@@ -404,7 +378,7 @@ describe('SyncEngine', () => {
 
 			const result = await context.engine.sync();
 
-			expect(result.success).toBe(true);
+			expect(result.errors).toEqual([]);
 			expect(context.executor.execute).toHaveBeenCalledTimes(1);
 		});
 
@@ -426,7 +400,7 @@ describe('SyncEngine', () => {
 
 			const result = await context.engine.sync();
 
-			expect(result.success).toBe(false);
+			expect(result.errors).not.toHaveLength(0);
 			expect(result.errors[0]?.action).toBe('delete-local');
 			expect(result.errors[0]?.message).toContain('destructive plan blocked');
 			expect(context.executor.execute).not.toHaveBeenCalled();
@@ -436,7 +410,6 @@ describe('SyncEngine', () => {
 		it('does not persist lastSuccessfulSyncAt when the executor returns a failed result', async () => {
 			const context = createEngineContext();
 			context.executor.execute.mockResolvedValueOnce(createSyncResult({
-				success: false,
 				errors: [{ path: 'notes/fail.md', action: 'upload', message: 'failed', recoverable: true }],
 			}));
 
@@ -454,8 +427,6 @@ describe('SyncEngine', () => {
 			const result = await context.engine.sync();
 
 			expect(result).toEqual({
-				success: false,
-				startedAt: 54_321,
 				completedAt: 54_321,
 				filesUploaded: 0,
 				filesDownloaded: 0,
@@ -478,7 +449,6 @@ describe('SyncEngine', () => {
 			const result = await context.engine.sync();
 
 			expect(result.errors).toEqual([{ path: '', action: 'skip', message: 'Unknown error', recoverable: false }]);
-			expect(result.startedAt).toBe(98_765);
 			expect(result.completedAt).toBe(98_765);
 			expect(consoleErrorSpy).toHaveBeenCalledWith('[S3 Sync] Sync failed: Unknown error');
 

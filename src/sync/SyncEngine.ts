@@ -5,7 +5,6 @@ import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
 import { SyncPlanner } from './SyncPlanner';
 import { SyncExecutor } from './SyncExecutor';
-import { computeDestinationFingerprint } from './DestinationFingerprint';
 
 const DESTINATION_FINGERPRINT_KEY = 'destinationFingerprint';
 const LAST_SUCCESSFUL_SYNC_KEY = 'lastSuccessfulSyncAt';
@@ -49,10 +48,8 @@ export class SyncEngine {
 		}
 
 		this.isSyncing = true;
-		const startedAt = Date.now();
-
 		try {
-			const startFingerprint = computeDestinationFingerprint(this.settings);
+			const startFingerprint = this.destinationFingerprint();
 			const storedDestinationFingerprint = await this.getStoredDestinationFingerprint();
 			const destinationGuardResult = this.checkDestinationFingerprint(
 				storedDestinationFingerprint,
@@ -91,7 +88,7 @@ export class SyncEngine {
 			);
 			const result = await executor.execute(plan);
 
-			if (result.success) {
+			if (result.errors.length === 0) {
 				await this.journal.setMetadata(LAST_SUCCESSFUL_SYNC_KEY, Date.now());
 			}
 
@@ -101,8 +98,6 @@ export class SyncEngine {
 			console.error(`[S3 Sync] Sync failed: ${message}`);
 
 			return {
-				success: false,
-				startedAt,
 				completedAt: Date.now(),
 				filesUploaded: 0,
 				filesDownloaded: 0,
@@ -123,7 +118,7 @@ export class SyncEngine {
 		// Hold the busy flag so a scheduled sync cannot start mid-reset.
 		this.isSyncing = true;
 		try {
-			const fingerprint = computeDestinationFingerprint(this.settings);
+			const fingerprint = this.destinationFingerprint();
 			await withJournalContext(
 				'resetting sync journal for the current destination',
 				() => this.journal.resetForDestination(fingerprint),
@@ -196,8 +191,6 @@ export class SyncEngine {
 		const now = Date.now();
 		console.error(`[S3 Sync] ${message}`);
 		return {
-			success: false,
-			startedAt: now,
 			completedAt: now,
 			filesUploaded: 0,
 			filesDownloaded: 0,
@@ -205,5 +198,9 @@ export class SyncEngine {
 			conflicts: [],
 			errors: [{ path: '', action, message, recoverable: false }],
 		};
+	}
+
+	private destinationFingerprint(): string {
+		return JSON.stringify({ bucket: this.settings.bucket, region: this.settings.region });
 	}
 }

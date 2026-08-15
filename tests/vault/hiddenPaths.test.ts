@@ -54,7 +54,6 @@ describe('isNeverSyncable', () => {
 		expect(isNeverSyncable('.git/config', '.obsidian')).toBe(true);
 		expect(isNeverSyncable('nested/.git/index', '.obsidian')).toBe(true);
 		expect(isNeverSyncable('.trash/old.md', '.obsidian')).toBe(true);
-		expect(isNeverSyncable('.obsidian-s3-sync/state.json', '.obsidian')).toBe(true);
 		expect(isNeverSyncable('.Git/config', '.obsidian')).toBe(true);
 		expect(isNeverSyncable('nested/.TRASH/old.md', '.obsidian')).toBe(true);
 	});

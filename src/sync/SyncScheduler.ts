@@ -11,8 +11,6 @@ export class SyncScheduler {
 
     private onSyncStart?: () => void;
     private onSyncComplete?: (result: SyncResult) => void;
-    private onSyncError?: (error: string) => void;
-
     constructor(
         private plugin: Plugin,
         private syncEngine: SyncEngine,
@@ -21,14 +19,12 @@ export class SyncScheduler {
         this.settings = cloneSettings(settings);
     }
 
-    setCallbacks(callbacks: {
-        onSyncStart?: () => void;
-        onSyncComplete?: (result: SyncResult) => void;
-        onSyncError?: (error: string) => void;
-    }): void {
-        this.onSyncStart = callbacks.onSyncStart;
-        this.onSyncComplete = callbacks.onSyncComplete;
-        this.onSyncError = callbacks.onSyncError;
+	setCallbacks(callbacks: {
+		onSyncStart?: () => void;
+		onSyncComplete?: (result: SyncResult) => void;
+	}): void {
+		this.onSyncStart = callbacks.onSyncStart;
+		this.onSyncComplete = callbacks.onSyncComplete;
     }
 
     /** Only stores the settings; main restarts the scheduler on settings changes. */
@@ -66,15 +62,8 @@ export class SyncScheduler {
 
         this.onSyncStart?.();
 
-        try {
-            const result = await this.syncEngine.sync();
-            this.onSyncComplete?.(result);
-            return result;
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            this.onSyncError?.(errorMessage);
-            console.error('[S3 Sync] Sync failed:', error);
-            return null;
-        }
-    }
+		const result = await this.syncEngine.sync();
+		this.onSyncComplete?.(result);
+		return result;
+	}
 }

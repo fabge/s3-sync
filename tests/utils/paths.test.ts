@@ -1,23 +1,6 @@
-import {
-    getExtension,
-    matchesAnyGlob,
-} from '../../src/utils/paths';
+import { matchesAnyGlob, remoteToLocal } from '../../src/utils/paths';
 
 describe('Path Utils', () => {
-
-    describe('getExtension', () => {
-        it('should extract file extension', () => {
-            expect(getExtension('file.md')).toBe('md');
-        });
-
-        it('should handle multiple dots', () => {
-            expect(getExtension('file.test.md')).toBe('md');
-        });
-
-        it('should handle no extension', () => {
-            expect(getExtension('README')).toBe('');
-        });
-    });
 
     describe('matchesAnyGlob', () => {
         it('should match any pattern in list', () => {
@@ -34,6 +17,13 @@ describe('Path Utils', () => {
         });
     });
 
-
-
+    it('rejects unsafe remote keys', () => {
+        expect(remoteToLocal('Notes/daily.md')).toBe('Notes/daily.md');
+        expect(remoteToLocal('Notes\\daily.md')).toBeNull();
+        expect(remoteToLocal('/Notes/daily.md')).toBeNull();
+        expect(remoteToLocal('Notes//daily.md')).toBeNull();
+        expect(remoteToLocal('../escape.md')).toBeNull();
+        expect(remoteToLocal('Notes/../escape.md')).toBeNull();
+        expect(remoteToLocal('Notes/./daily.md')).toBeNull();
+    });
 });

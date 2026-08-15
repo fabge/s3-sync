@@ -8,10 +8,14 @@ import { createObsidianVault } from './vault/ObsidianVault';
 import { validateHiddenPatterns } from './vault/hiddenPaths';
 import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
-import { registerPluginCommands } from './commands';
 
 interface PersistedPluginData extends Partial<S3SyncSettings> {
 	journalId?: unknown;
+}
+
+interface ObsidianSettingsApi {
+	open: () => void;
+	openTabById: (id: string) => void;
 }
 
 /** data.json is user-editable, so a persisted glob list may be any shape. */
@@ -30,7 +34,6 @@ export default class S3SyncPlugin extends Plugin {
 	private s3Provider: S3Provider | null = null;
 	private statusBar: StatusBar | null = null;
 	private lastConflicts: string[] = [];
-	private lastError: string | null = null;
 	private syncJournal: SyncJournal | null = null;
 	private syncEngine: SyncEngine | null = null;
 	private syncScheduler: SyncScheduler | null = null;
@@ -39,8 +42,7 @@ export default class S3SyncPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.s3Provider = new S3Provider(this.settings);
-		this.statusBar = new StatusBar(this);
-		this.statusBar.setActionHandler(() => {
+		this.statusBar = new StatusBar(this, () => {
 			if (this.lastConflicts.length > 0) {
 				this.showConflictNotice();
 				return;
@@ -62,7 +64,6 @@ export default class S3SyncPlugin extends Plugin {
 		this.syncScheduler = new SyncScheduler(this, this.syncEngine, this.settings);
 		this.syncScheduler.setCallbacks({
 			onSyncStart: () => {
-				this.lastError = null;
 				this.statusBar?.updateSyncState({
 					status: 'syncing',
 					lastError: null,
@@ -88,13 +89,6 @@ export default class S3SyncPlugin extends Plugin {
 					new Notice(nonRecoverableError.message, 15_000);
 				}
 			},
-			onSyncError: (error) => {
-				this.lastError = error;
-				this.statusBar?.updateSyncState({
-					status: 'error',
-					lastError: error,
-				});
-			},
 		});
 
 		this.updateStatusBarFromSettings();
@@ -103,12 +97,25 @@ export default class S3SyncPlugin extends Plugin {
 		this.addRibbonIcon('refresh-cw', 'Sync vault', async () => {
 			await this.triggerManualSync();
 		});
-		registerPluginCommands(this);
+		this.addCommand({
+			id: 'sync-now',
+			name: 'Sync now',
+			callback: async () => this.triggerManualSync(),
+		});
+		this.addCommand({
+			id: 'open-settings',
+			name: 'Open settings',
+			callback: () => {
+				const settings = (this.app as unknown as { setting: ObsidianSettingsApi }).setting;
+				settings.open();
+				settings.openTabById(this.manifest.id);
+			},
+		});
 		this.startSyncServices();
 
 		this.app.workspace.onLayoutReady(() => {
 			if (this.settings.syncEnabled && this.settings.syncOnStartup) {
-				void this.triggerStartupSync();
+				void this.triggerSyncWithNotices();
 			}
 		});
 	}
@@ -231,17 +238,11 @@ export default class S3SyncPlugin extends Plugin {
 		this.startSyncServices();
 	}
 
-	private async triggerStartupSync(): Promise<void> {
-		await this.triggerSyncWithNotices();
-	}
-
 	private async triggerSyncWithNotices(): Promise<void> {
 		new Notice('Starting sync...');
 		const result = await this.syncScheduler?.triggerSync();
 		if (!result) {
-			// triggerSync swallows the failure and returns null, so without
-			// this the status bar would show Error and no toast would follow.
-			new Notice(this.lastError ? `Sync failed: ${this.lastError}` : 'Sync did not run.');
+			new Notice('Sync did not run.');
 			return;
 		}
 

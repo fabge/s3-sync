@@ -36,18 +36,6 @@ export default tseslint.config(
 		"tests",
 		"esbuild.config.mjs",
 		"eslint.config.js",
-		"commitlint.config.js",
-		"versions.json",
 		"main.js",
-		"scripts/version.mjs",
 	]),
-	// Enable sentence-case with MinIO as a recognized brand
-	{
-		files: ["src/**/*.ts"],
-		rules: {
-			"obsidianmd/ui/sentence-case": ["warn", {
-				brands: ["MinIO"],
-			}],
-		},
-	},
 );

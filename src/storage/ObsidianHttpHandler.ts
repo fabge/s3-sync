@@ -3,19 +3,9 @@
 import { requestUrl, RequestUrlParam } from 'obsidian';
 import { HttpRequest, HttpResponse } from '@smithy/protocol-http';
 import { buildQueryString } from '@smithy/querystring-builder';
-import { HttpHandlerOptions } from '@smithy/types';
 
 export class ObsidianHttpHandler {
-    private requestTimeout: number;
-
-    constructor(options?: { requestTimeout?: number }) {
-        this.requestTimeout = options?.requestTimeout ?? 30000;
-    }
-
-    async handle(
-        request: HttpRequest,
-        _options?: HttpHandlerOptions
-    ): Promise<{ response: HttpResponse }> {
+	async handle(request: HttpRequest): Promise<{ response: HttpResponse }> {
         const url = this.buildUrl(request);
 
         const headers: Record<string, string> = {};
@@ -35,7 +25,7 @@ export class ObsidianHttpHandler {
             // Don't throw on 4xx/5xx — return them so the SDK's error parser can
             // produce the correct typed error (NoSuchKey, AccessDenied, etc.).
             throw: false,
-        };
+		};
 
         if (request.body && request.method !== 'GET' && request.method !== 'HEAD') {
             if (request.body instanceof Uint8Array) {
@@ -48,29 +38,22 @@ export class ObsidianHttpHandler {
             }
         }
 
-        try {
-            console.debug(`[S3 HTTP] ${request.method} ${url}`);
-            const obsidianResponse = await requestUrl(requestParams);
-            console.debug(`[S3 HTTP] Response: ${obsidianResponse.status}`);
+		const obsidianResponse = await requestUrl(requestParams);
 
-            const responseHeaders: Record<string, string> = {};
-            if (obsidianResponse.headers) {
-                for (const [key, value] of Object.entries(obsidianResponse.headers)) {
-                    responseHeaders[key.toLowerCase()] = value;
-                }
+        const responseHeaders: Record<string, string> = {};
+        if (obsidianResponse.headers) {
+            for (const [key, value] of Object.entries(obsidianResponse.headers)) {
+                responseHeaders[key.toLowerCase()] = value;
             }
+        }
 
-            const response = new HttpResponse({
+        return {
+            response: new HttpResponse({
                 statusCode: obsidianResponse.status,
                 headers: responseHeaders,
                 body: this.createResponseBody(obsidianResponse.arrayBuffer),
-            });
-            return { response };
-        } catch (error) {
-            console.error('[S3 HTTP] Request error:', error);
-            const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`Request failed: ${message}`);
-        }
+            }),
+        };
     }
 
     private buildUrl(request: HttpRequest): string {
@@ -110,15 +93,4 @@ export class ObsidianHttpHandler {
         return new Blob([arrayBuffer]);
     }
 
-    updateHttpClientConfig(_key: never, _value: never): void {
-        // No configurable socket layer behind requestUrl.
-    }
-
-    httpHandlerConfigs(): Record<string, unknown> {
-        return { requestTimeout: this.requestTimeout };
-    }
-
-    destroy(): void {
-        // requestUrl manages its own lifecycle; nothing to release.
-    }
 }

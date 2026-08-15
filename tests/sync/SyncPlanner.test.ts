@@ -477,13 +477,13 @@ describe('SyncPlanner', () => {
 	});
 
 	describe('discoverState', () => {
-		it('excludes recorded conflict artifacts from locals, excludes metadata remotes, and attaches journal state', async () => {
+		it('excludes recorded conflict artifacts and hidden remotes, and attaches journal state', async () => {
 			addVaultFile('dir/note.md');
 			addVaultFile('dir/LOCAL_note.md');
 			addVaultFile('dir/REMOTE_note.md');
 			s3Provider.listObjects.mockResolvedValue([
 				createRemoteObject({ key: 'dir/note.md', etag: '"remote-etag"' }),
-				createRemoteObject({ key: '.obsidian-s3-sync/engine.json' }),
+				createRemoteObject({ key: '.hidden/engine.json' }),
 			]);
 			journal.getAllStateRecords.mockResolvedValue([
 				createStateRecord({ path: 'dir/note.md' }),
@@ -509,7 +509,7 @@ describe('SyncPlanner', () => {
 			expect(context?.remote?.objectInfo.etag).toBe('remote-etag');
 			expect(contexts.has('dir/LOCAL_note.md')).toBe(false);
 			expect(contexts.has('dir/REMOTE_note.md')).toBe(false);
-			expect(contexts.has('.obsidian-s3-sync/engine.json')).toBe(false);
+			expect(contexts.has('.hidden/engine.json')).toBe(false);
 		});
 
 		it('keeps LOCAL_ and REMOTE_ files when they are not recorded conflict artifacts', async () => {
@@ -527,11 +527,11 @@ describe('SyncPlanner', () => {
 			planner = createPlanner({ excludePatterns: ['archive/**'] });
 			addVaultFile('.trash/local.md');
 			addVaultFile('archive/local.md');
-			addVaultFile('folder/.obsidian-s3-sync-hidden.md');
+			addVaultFile('folder/.hidden-local.md');
 			s3Provider.listObjects.mockResolvedValue([
 				createRemoteObject({ key: '.trash/remote.md' }),
 				createRemoteObject({ key: 'archive/remote.md' }),
-				createRemoteObject({ key: 'folder/.obsidian-s3-sync-remote.md' }),
+				createRemoteObject({ key: 'folder/.hidden-remote.md' }),
 			]);
 			journal.getAllStateRecords.mockResolvedValue([
 				createStateRecord({ path: '.trash/baseline.md' }),
@@ -545,7 +545,7 @@ describe('SyncPlanner', () => {
 			expect(contexts.has('archive/local.md')).toBe(false);
 			expect(contexts.has('archive/remote.md')).toBe(false);
 			expect(contexts.has('archive/baseline.md')).toBe(false);
-			expect(contexts.has('folder/.obsidian-s3-sync-hidden.md')).toBe(false);
+			expect(contexts.has('folder/.hidden-local.md')).toBe(false);
 			expect(contexts.has('.trash/baseline.md')).toBe(false);
 		});
 
@@ -882,27 +882,21 @@ describe('SyncPlanner', () => {
 
 		// A glob is user input, so the never-syncable list is enforced here
 		// rather than only where patterns are entered in settings.
-		it('never lets an allowlist reach Git, trash, the config dir, or plugin metadata', () => {
-			const wideOpen = createPlanner({ includeHiddenPaths: ['.claude/**', '.git/**', '.obsidian-s3-sync/**'] });
+		it('never lets an allowlist reach Git, trash, or the config dir', () => {
+			const wideOpen = createPlanner({ includeHiddenPaths: ['.claude/**', '.git/**'] });
 			const excluded = (path: string): boolean => getPlannerPrivate(wideOpen).shouldExclude(path);
 
 			expect(excluded('.git/config')).toBe(true);
-			expect(excluded('.obsidian-s3-sync/state.json')).toBe(true);
 			expect(excluded('.obsidian/appearance.json')).toBe(true);
 			// Nested under an allowlisted root, which the pattern does match.
 			expect(excluded('.claude/.git/config')).toBe(true);
 			expect(excluded('.claude/.trash/old.md')).toBe(true);
-			expect(excluded('.claude/.obsidian-s3-sync/state.json')).toBe(true);
 			expect(excluded('.claude/skills/qmd/SKILL.md')).toBe(false);
 		});
 
 		it('does not globally exclude LOCAL_ and REMOTE_ filenames', () => {
 			expect(getPlannerPrivate(planner).shouldExclude('folder/LOCAL_note.md')).toBe(false);
 			expect(getPlannerPrivate(planner).shouldExclude('folder/REMOTE_note.md')).toBe(false);
-		});
-
-		it('excludes files whose filename starts with .obsidian-s3-sync', () => {
-			expect(getPlannerPrivate(planner).shouldExclude('folder/.obsidian-s3-sync-log.json')).toBe(true);
 		});
 
 		// Uses a visible path: with the defaults now empty, asserting on

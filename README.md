@@ -69,7 +69,7 @@ Obsidian's vault index never surfaces dot-prefixed files or folders, so by defau
 
 Matching files are enumerated and transferred through the vault adapter rather than the vault API. They therefore sync as ordinary S3 objects while remaining invisible to Obsidian — they never become notes, never appear in search, and never enter the graph. This is the intended way to carry per-vault tooling config to machines that receive the vault only over S3.
 
-Every glob must name a concrete hidden root; a bare `**` or a visible folder is rejected, because discovering hidden files anywhere in the vault would mean walking the entire tree on every cycle. Patterns are accepted in exactly one shape — a concrete dot-prefixed folder followed by at least one more component, such as `.claude/**`. A bare `.claude`, a wildcard root, backslashes, and any `.` or `..` segment are refused with the correction in the message rather than repaired, because a pattern decides which files leave the machine. `.git`, `.trash`, `.obsidian-s3-sync` and the Obsidian config folder are refused at any depth, whatever the glob says: syncing a `.git` directory between machines corrupts repositories, and `.obsidian-s3-sync` is the plugin's own remote metadata namespace, which is stripped from every remote listing and would therefore be deleted locally on the next cycle.
+Every glob must name a concrete hidden root; a bare `**` or a visible folder is rejected, because discovering hidden files anywhere in the vault would mean walking the entire tree on every cycle. Patterns are accepted in exactly one shape — a concrete dot-prefixed folder followed by at least one more component, such as `.claude/**`. A bare `.claude`, a wildcard root, backslashes, and any `.` or `..` segment are refused with the correction in the message rather than repaired, because a pattern decides which files leave the machine. `.git`, `.trash`, and the Obsidian config folder are refused at any depth, whatever the glob says: syncing a `.git` directory between machines corrupts repositories.
 
 Two behaviours differ from ordinary notes. Remote deletions of hidden files always go to the vault's local `.trash` folder, because the adapter has no access to Obsidian's trash preference. And nesting is walked to a fixed depth of 16, which stops a symlinked folder from recursing forever.
 
@@ -157,7 +157,7 @@ It is not recommended. Running two sync systems against the same files increases
 
 **What files are excluded by default?**
 
-There are no editable defaults — **Exclude patterns** starts empty. Independently of any setting, nothing dot-prefixed syncs unless a hidden-path glob opts it in, and `.git`, `.trash`, `.obsidian-s3-sync` and the Obsidian config folder (including this plugin's own `data.json`) can never be opted in at all.
+There are no editable defaults — **Exclude patterns** starts empty. Independently of any setting, nothing dot-prefixed syncs unless a hidden-path glob opts it in, and `.git`, `.trash`, and the Obsidian config folder (including this plugin's own `data.json`) can never be opted in at all.
 
 ## Development
 
@@ -187,12 +187,4 @@ The workflow fails if the release tag version does not match `manifest.json`.
 
 ## Credits
 
-This plugin is a stripped-down reinterpretation of
-[`ceilaolabs/obsidian-s3-sync-and-backup`](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup) —
-the original ("OG") project that inspired it. That repo is the full-featured
-take (multiple storage providers, encryption, scheduled backups). This one
-deliberately keeps a much smaller surface: AWS S3 only, sync only, no
-encryption. Several safety and correctness ideas here (weak-ETag normalization,
-destination-fingerprint / stale-journal protection, the destructive-plan block,
-and the **Reset sync journal** action) are borrowed from it. Credit for the
-original concept goes to its authors.
+This plugin is a stripped-down reinterpretation of [`ceilaolabs/obsidian-s3-sync-and-backup`](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup) — the original ("OG") project that inspired it. That repo is the full-featured take (multiple storage providers, encryption, scheduled backups). This one deliberately keeps a much smaller surface: AWS S3 only, sync only, no encryption. Several safety and correctness ideas here (weak-ETag normalization, destination-fingerprint / stale-journal protection, the destructive-plan block, and the **Reset sync journal** action) are borrowed from it. Credit for the original concept goes to its authors.

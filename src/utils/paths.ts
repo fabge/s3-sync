@@ -9,18 +9,6 @@ export function pathSegments(path: string): string[] {
     return normalizePath(path).split('/');
 }
 
-function getFilename(path: string): string {
-    const normalized = normalizePath(path);
-    const lastSlash = normalized.lastIndexOf('/');
-    return lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized;
-}
-
-export function getExtension(path: string): string {
-    const filename = getFilename(path);
-    const lastDot = filename.lastIndexOf('.');
-    return lastDot >= 0 ? filename.substring(lastDot + 1) : '';
-}
-
 // Patterns are matched against every vault file, remote object, and baseline
 // each sync cycle; cache the compiled form instead of recompiling per call.
 const globRegexCache = new Map<string, RegExp>();
@@ -61,4 +49,14 @@ export function matchesAnyGlob(path: string, patterns: string[]): boolean {
  */
 export function isHiddenPath(path: string): boolean {
 	return pathSegments(path).some((segment) => segment.startsWith('.'));
+}
+
+/** Reject S3 keys that cannot round-trip as safe vault paths. */
+export function remoteToLocal(remoteKey: string): string | null {
+	if (remoteKey.includes('\\')) return null;
+
+	const segments = remoteKey.split('/');
+	return segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+		? null
+		: remoteKey;
 }

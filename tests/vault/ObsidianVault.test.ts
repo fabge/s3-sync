@@ -125,7 +125,7 @@ describe('createObsidianVault', () => {
 		const found = await createObsidianVault(app).getHiddenFiles([
 			'.git/**',
 			'.Git/**',
-			'.obsidian-s3-sync/**',
+			'.trash/**',
 		]);
 
 		expect(found).toEqual([]);

@@ -12,12 +12,11 @@ import {
 	VaultFile,
 	VaultLike,
 } from '../types';
-import { getVaultFileKind, readVaultFile, toArrayBuffer } from '../utils/vaultFiles';
+import { readVaultFile, toArrayBuffer } from '../utils/vaultFiles';
 import { pathSegments } from '../utils/paths';
 import { fingerprint } from '../utils/fingerprint';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
-import { localToRemote } from './SyncPathCodec';
 
 // 4 hides S3 round-trip latency while staying within typical browser
 // connection-pool limits (~6/host) and avoiding large-binary memory spikes.
@@ -36,8 +35,6 @@ export class SyncExecutor {
 
 	async execute(plan: SyncPlanItem[]): Promise<SyncResult> {
 		const result: SyncResult = {
-			success: false,
-			startedAt: Date.now(),
 			completedAt: 0,
 			filesUploaded: 0,
 			filesDownloaded: 0,
@@ -80,7 +77,6 @@ export class SyncExecutor {
 		}
 
 		result.conflicts = (await this.journal.getAllConflicts()).map((c) => c.path);
-		result.success = result.errors.length === 0;
 		result.completedAt = Date.now();
 		return result;
 	}
@@ -119,8 +115,7 @@ export class SyncExecutor {
 
 	/** Adopt records "both sides identical" — re-verify neither side moved since planning. */
 	private async executeAdopt(item: SyncPlanItem): Promise<void> {
-		const remoteKey = localToRemote(item.path);
-		const head = await this.s3Provider.headObject(remoteKey);
+		const head = await this.s3Provider.headObject(item.path);
 		if (!head) {
 			throw new Error(`Remote file disappeared during adopt: ${item.path}`);
 		}
@@ -161,10 +156,7 @@ export class SyncExecutor {
 		const localSize = file.stat.size;
 		const content = await readVaultFile(this.vault, file);
 		const contentFingerprint = await fingerprint(content);
-		const remoteKey = localToRemote(item.path);
-
-		const etag = await this.s3Provider.uploadFile(remoteKey, content, {
-			contentType: this.guessContentType(item.path),
+		const etag = await this.s3Provider.uploadFile(item.path, content, {
 			ifMatch: item.expectRemoteAbsent ? undefined : item.expectedRemoteEtag,
 			ifNoneMatch: item.expectRemoteAbsent ? '*' : undefined,
 			metadata: {
@@ -193,8 +185,7 @@ export class SyncExecutor {
 
 	/** The sleep(0) lets Obsidian's file indexer observe the written file. */
 	private async executeDownload(item: SyncPlanItem): Promise<void> {
-		const remoteKey = localToRemote(item.path);
-		const downloaded = await this.s3Provider.downloadFileWithMetadata(remoteKey);
+		const downloaded = await this.s3Provider.downloadFileWithMetadata(item.path);
 		if (!downloaded) {
 			throw new Error(`Remote file disappeared during sync: ${item.path}`);
 		}
@@ -236,9 +227,7 @@ export class SyncExecutor {
 
 	/** Abort remote deletes when the planned ETag no longer matches. */
 	private async executeDeleteRemote(item: SyncPlanItem): Promise<void> {
-		const remoteKey = localToRemote(item.path);
-
-		await this.s3Provider.deleteFile(remoteKey, item.expectedRemoteEtag);
+		await this.s3Provider.deleteFile(item.path, item.expectedRemoteEtag);
 		await this.journal.deleteStateRecord(item.path);
 		await this.journal.deleteConflict(item.path);
 	}
@@ -263,8 +252,7 @@ export class SyncExecutor {
 		}
 
 		if (mode === 'both' || mode === 'remote-only') {
-			const remoteKey = localToRemote(item.path);
-			const downloaded = await this.s3Provider.downloadFileWithMetadata(remoteKey);
+			const downloaded = await this.s3Provider.downloadFileWithMetadata(item.path);
 			if (downloaded) {
 				await this.writeLocalFile(remoteArtifactPath, downloaded.content);
 			}
@@ -332,10 +320,6 @@ export class SyncExecutor {
 				throw error;
 			}
 		}
-	}
-
-	private guessContentType(path: string): string {
-		return getVaultFileKind(path) === 'text' ? 'text/plain; charset=utf-8' : 'application/octet-stream';
 	}
 
 	/**

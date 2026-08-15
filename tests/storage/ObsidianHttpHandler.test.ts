@@ -213,49 +213,4 @@ describe('ObsidianHttpHandler', () => {
 		});
 	});
 
-	describe('error handling', () => {
-		it('wraps network errors with a descriptive message', async () => {
-			mockedRequestUrl.mockRejectedValue(new Error('net::ERR_CONNECTION_REFUSED'));
-			const handler = new ObsidianHttpHandler();
-			const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-
-			await expect(handler.handle(new HttpRequest({
-				protocol: 'https:',
-				hostname: 'example.com',
-				method: 'GET',
-				path: '/',
-				headers: {},
-			}))).rejects.toThrow('Request failed: net::ERR_CONNECTION_REFUSED');
-
-			consoleSpy.mockRestore();
-		});
-
-		it('wraps non-Error thrown values', async () => {
-			mockedRequestUrl.mockRejectedValue('string error');
-			const handler = new ObsidianHttpHandler();
-			const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-
-			await expect(handler.handle(new HttpRequest({
-				protocol: 'https:',
-				hostname: 'example.com',
-				method: 'GET',
-				path: '/',
-				headers: {},
-			}))).rejects.toThrow('Request failed: string error');
-
-			consoleSpy.mockRestore();
-		});
-	});
-
-	describe('Smithy interface', () => {
-		it('returns requestTimeout in httpHandlerConfigs', () => {
-			const handler = new ObsidianHttpHandler({ requestTimeout: 5000 });
-			expect(handler.httpHandlerConfigs()).toEqual({ requestTimeout: 5000 });
-		});
-
-		it('uses default requestTimeout of 30000', () => {
-			const handler = new ObsidianHttpHandler();
-			expect(handler.httpHandlerConfigs()).toEqual({ requestTimeout: 30000 });
-		});
-	});
 });

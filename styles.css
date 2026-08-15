@@ -1,4 +1,4 @@
-.s3-sync-segment {
+.s3-sync-status {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.25rem;
@@ -14,8 +14,7 @@
 	line-height: 1;
 }
 
-.s3-sync-status.is-syncing,
-.s3-sync-status.is-running {
+.s3-sync-status.is-syncing {
 	color: var(--text-accent);
 }
 
@@ -24,7 +23,6 @@
 	color: var(--text-error);
 }
 
-.s3-sync-status.is-disabled,
-.s3-sync-status.is-paused {
+.s3-sync-status.is-disabled {
 	color: var(--text-muted);
 }

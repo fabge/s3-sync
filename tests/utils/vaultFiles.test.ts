@@ -1,7 +1,7 @@
 jest.mock('obsidian');
 
 import { TFile, Vault } from 'obsidian';
-import { getVaultFileKind, readVaultFile, toArrayBuffer } from '../../src/utils/vaultFiles';
+import { readVaultFile, toArrayBuffer } from '../../src/utils/vaultFiles';
 import { VaultLike } from '../../src/types';
 
 class MockTFile extends TFile {}
@@ -13,20 +13,6 @@ function createFile(path: string): TFile {
 }
 
 describe('vaultFiles', () => {
-    describe('getVaultFileKind', () => {
-        it.each(['note.md', 'data.json', 'table.csv', 'diagram.svg', 'script.ts'])('returns text for %s', (path) => {
-            expect(getVaultFileKind(path)).toBe('text');
-        });
-
-        it.each(['image.png', 'photo.jpg', 'document.pdf'])('returns binary for %s', (path) => {
-            expect(getVaultFileKind(path)).toBe('binary');
-        });
-
-        it('returns binary when there is no extension', () => {
-            expect(getVaultFileKind('README')).toBe('binary');
-        });
-    });
-
     describe('readVaultFile', () => {
         it('reads every file as raw bytes through vault.readBinary', async () => {
             const vault = new Vault();

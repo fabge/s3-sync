@@ -22,7 +22,7 @@ function buildS3ClientConfig(settings: S3SyncSettings): S3ClientConfig {
             accessKeyId: settings.accessKeyId,
             secretAccessKey: settings.secretAccessKey,
         },
-        requestHandler: new ObsidianHttpHandler({ requestTimeout: 30000 }),
+		requestHandler: new ObsidianHttpHandler(),
     };
 }
 
@@ -184,7 +184,7 @@ export class S3Provider {
     async uploadFile(
         key: string,
         content: Uint8Array,
-        options?: { contentType?: string; ifMatch?: string; ifNoneMatch?: string; metadata?: Record<string, string> }
+		options?: { ifMatch?: string; ifNoneMatch?: string; metadata?: Record<string, string> }
     ): Promise<string> {
         const settings = this.settings;
 
@@ -192,7 +192,6 @@ export class S3Provider {
             Bucket: settings.bucket,
             Key: key,
             Body: content,
-            ContentType: options?.contentType,
             IfMatch: this.toConditionalEntityTag(options?.ifMatch),
             IfNoneMatch: this.toConditionalEntityTag(options?.ifNoneMatch),
             Metadata: options?.metadata,

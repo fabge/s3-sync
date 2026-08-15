@@ -1,6 +1,5 @@
 import { Plugin, setIcon, setTooltip } from 'obsidian';
 import { SyncState, SyncStatus } from './types';
-import { formatRelativeTime } from './utils/time';
 
 interface StatusIndicatorSpec {
 	icon: string;
@@ -18,10 +17,6 @@ const SYNC_STATUS_SPEC: Record<SyncStatus, StatusIndicatorSpec> = {
 
 export class StatusBar {
 	private statusBarEl: HTMLElement | null = null;
-	private segmentEl: HTMLElement | null = null;
-	private iconEl: HTMLElement | null = null;
-	private textEl: HTMLElement | null = null;
-	private actionHandler?: () => void;
 
 	private syncState: SyncState = {
 		status: 'disabled',
@@ -30,17 +25,20 @@ export class StatusBar {
 		lastError: null,
 	};
 
-	constructor(private plugin: Plugin) {}
-
-	setActionHandler(handler: () => void): void {
-		this.actionHandler = handler;
-	}
+	constructor(private plugin: Plugin, private actionHandler: () => void) {}
 
 	init(): void {
 		this.statusBarEl = this.plugin.addStatusBarItem();
 		this.statusBarEl.addClasses(['s3-sync-status', 'mod-clickable']);
-		this.statusBarEl.empty();
-		this.segmentEl = this.createSegment();
+		this.statusBarEl.tabIndex = 0;
+		this.statusBarEl.setAttr('role', 'button');
+		this.statusBarEl.addEventListener('click', this.actionHandler);
+		this.statusBarEl.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter' || event.key === ' ') {
+				event.preventDefault();
+				this.actionHandler();
+			}
+		});
 		this.update();
 	}
 
@@ -52,64 +50,20 @@ export class StatusBar {
 	destroy(): void {
 		this.statusBarEl?.remove();
 		this.statusBarEl = null;
-		this.segmentEl = null;
-		this.iconEl = null;
-		this.textEl = null;
-	}
-
-	private createSegment(): HTMLElement {
-		const segment = this.statusBarEl!.createSpan({ cls: 's3-sync-segment' });
-		segment.tabIndex = 0;
-		segment.setAttr('role', 'button');
-
-		this.iconEl = segment.createSpan({ cls: 's3-sync-icon' });
-		this.textEl = segment.createSpan({ cls: 's3-sync-text' });
-
-		segment.addEventListener('click', () => {
-			this.actionHandler?.();
-		});
-		segment.addEventListener('keydown', (event) => {
-			if (event.key === 'Enter' || event.key === ' ') {
-				event.preventDefault();
-				this.actionHandler?.();
-			}
-		});
-
-		return segment;
 	}
 
 	private update(): void {
-		if (!this.statusBarEl || !this.segmentEl || !this.iconEl || !this.textEl) {
-			return;
-		}
-
-		this.renderSync();
-		setTooltip(this.statusBarEl, this.getTooltipContent());
-	}
-
-	private renderSync(): void {
 		const statusBarEl = this.statusBarEl;
-		if (!statusBarEl || !this.segmentEl || !this.iconEl || !this.textEl) {
-			return;
-		}
+		if (!statusBarEl) return;
 
 		const spec = SYNC_STATUS_SPEC[this.syncState.status];
 		statusBarEl.className =
 			`status-bar-item plugin-s3-sync mod-clickable s3-sync-status is-${this.syncState.status}`;
-		this.renderIcon(this.iconEl, spec);
-
-		const suffix =
-			this.syncState.status === 'conflicts'
-				? ` ${this.syncState.conflictCount}`
-				: this.syncState.lastSyncTime
-					? ` ${formatRelativeTime(this.syncState.lastSyncTime)}`
-					: '';
-		this.textEl.setText(` ${spec.label}${suffix}`);
-	}
-
-	private renderIcon(target: HTMLElement, spec: StatusIndicatorSpec): void {
-		target.empty();
-		setIcon(target, spec.icon);
+		statusBarEl.empty();
+		setIcon(statusBarEl.createSpan({ cls: 's3-sync-icon' }), spec.icon);
+		const count = this.syncState.status === 'conflicts' ? ` ${this.syncState.conflictCount}` : '';
+		statusBarEl.createSpan({ cls: 's3-sync-text', text: ` ${spec.label}${count}` });
+		setTooltip(statusBarEl, this.getTooltipContent());
 	}
 
 	private getTooltipContent(): string {

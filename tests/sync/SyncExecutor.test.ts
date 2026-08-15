@@ -13,7 +13,6 @@ jest.mock('../../src/utils/fingerprint', () => ({
 }));
 
 jest.mock('../../src/utils/vaultFiles', () => ({
-	getVaultFileKind: jest.fn(),
 	readVaultFile: jest.fn(),
 	toArrayBuffer: jest.fn(),
 }));
@@ -32,7 +31,7 @@ import {
 	SyncResult,
 	SyncStateRecord,
 } from '../../src/types';
-import { getVaultFileKind, readVaultFile, toArrayBuffer } from '../../src/utils/vaultFiles';
+import { readVaultFile, toArrayBuffer } from '../../src/utils/vaultFiles';
 import { fingerprint } from '../../src/utils/fingerprint';
 
 class TestTFile extends TFile {
@@ -112,7 +111,6 @@ interface ExecutorInternals {
 	executeForget(item: SyncPlanItem): Promise<void>;
 	writeLocalFile(path: string, content: Uint8Array): Promise<void>;
 	ensureParentFolders(path: string): Promise<void>;
-	guessContentType(path: string): string;
 	toSyncError(path: string, action: SyncAction, error: unknown): SyncError;
 	log(message: string): void;
 }
@@ -136,7 +134,6 @@ interface Deferred<T> {
 	reject: (reason?: unknown) => void;
 }
 
-const mockedGetVaultFileKind = jest.mocked(getVaultFileKind);
 const mockedReadVaultFile = jest.mocked(readVaultFile);
 const mockedToArrayBuffer = jest.mocked(toArrayBuffer);
 const mockedFingerprint = jest.mocked(fingerprint);
@@ -172,8 +169,6 @@ function encode(text: string): Uint8Array {
 
 function createResult(): SyncResult {
 	return {
-		success: false,
-		startedAt: 0,
 		completedAt: 0,
 		filesUploaded: 0,
 		filesDownloaded: 0,
@@ -321,7 +316,6 @@ function createExecutorContext(): ExecutorContext {
 describe('SyncExecutor', () => {
 	beforeEach(() => {
 		jest.clearAllMocks();
-		mockedGetVaultFileKind.mockImplementation((path: string) => path.endsWith('.md') ? 'text' : 'binary');
 		mockedReadVaultFile.mockResolvedValue(encode('vault-content'));
 		mockedFingerprint.mockResolvedValue('fingerprint-1');
 		mockedToArrayBuffer.mockImplementation((content: Uint8Array) => content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength));
@@ -333,14 +327,12 @@ describe('SyncExecutor', () => {
 
 			const result = await executor.execute([]);
 
-			expect(result.success).toBe(true);
 			expect(result.filesUploaded).toBe(0);
 			expect(result.filesDownloaded).toBe(0);
 			expect(result.filesDeleted).toBe(0);
 			expect(result.errors).toEqual([]);
 			expect(result.conflicts).toEqual([]);
-			expect(result.startedAt).toBeGreaterThan(0);
-			expect(result.completedAt).toBeGreaterThanOrEqual(result.startedAt);
+			expect(result.completedAt).toBeGreaterThan(0);
 			expect(journal.getAllConflicts).toHaveBeenCalledTimes(1);
 		});
 
@@ -366,7 +358,6 @@ describe('SyncExecutor', () => {
 				createPlanItem('skip', { path: 'skip.md' }),
 			]);
 
-			expect(result.success).toBe(true);
 			expect(result.filesUploaded).toBe(1);
 			expect(result.filesDownloaded).toBe(1);
 			expect(result.filesDeleted).toBe(2);
@@ -442,7 +433,6 @@ describe('SyncExecutor', () => {
 
 			const result = await execution;
 
-			expect(result.success).toBe(false);
 			expect(result.errors).toHaveLength(3);
 			expect(result.errors.map((error) => error.message)).toEqual(['fail-1', 'fail-2', 'fail-3']);
 		});
@@ -459,7 +449,6 @@ describe('SyncExecutor', () => {
 				createPlanItem('download', { path: 'error-b.md' }),
 			]);
 
-			expect(result.success).toBe(false);
 			expect(result.errors).toEqual([
 				{ path: 'error-a.md', action: 'upload', message: 'boom', recoverable: true },
 				{ path: 'error-b.md', action: 'download', message: 'Unknown error', recoverable: true },
@@ -623,7 +612,6 @@ describe('SyncExecutor', () => {
 			expect(mockedReadVaultFile).toHaveBeenCalledWith(vaultPort, file);
 			expect(mockedFingerprint).toHaveBeenCalledWith(encode('upload me'));
 			expect(s3Provider.uploadFile).toHaveBeenCalledWith('notes/test.md', new TextEncoder().encode('upload me'), {
-				contentType: 'text/plain; charset=utf-8',
 				ifMatch: undefined,
 				ifNoneMatch: '*',
 				metadata: {
@@ -724,7 +712,6 @@ describe('SyncExecutor', () => {
 			const plaintext = new Uint8Array([7, 8, 9]);
 			const localFile = addFile('notes/test.png', plaintext, { mtime: 777, size: 3 });
 			const writeSpy = jest.spyOn(internals, 'writeLocalFile').mockResolvedValue(undefined);
-			mockedGetVaultFileKind.mockImplementation((path: string) => path.endsWith('.png') ? 'binary' : 'text');
 			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: plaintext }));
 			app.vault.getAbstractFileByPath.mockReturnValue(localFile);
 
@@ -1004,7 +991,6 @@ describe('SyncExecutor', () => {
 			const { internals, app, s3Provider, journal } = createExecutorContext();
 			const writeSpy = jest.spyOn(internals, 'writeLocalFile').mockResolvedValue(undefined);
 			app.vault.getAbstractFileByPath.mockReturnValue(null);
-			mockedGetVaultFileKind.mockImplementation((path: string) => path.endsWith('.png') ? 'binary' : 'text');
 			s3Provider.downloadFileWithMetadata.mockResolvedValue(createDownloadResult({ content: new Uint8Array([7, 8, 9]) }));
 
 			await internals.executeConflict(createPlanItem('conflict', {
@@ -1104,20 +1090,6 @@ describe('SyncExecutor', () => {
 			await internals.ensureParentFolders('root.md');
 
 			expect(app.vault.createFolder).not.toHaveBeenCalled();
-		});
-	});
-
-	describe('guessContentType', () => {
-		it('returns a text content type for markdown files', () => {
-			const { internals } = createExecutorContext();
-
-			expect(internals.guessContentType('notes/test.md')).toBe('text/plain; charset=utf-8');
-		});
-
-		it('returns an octet-stream content type for binary files', () => {
-			const { internals } = createExecutorContext();
-
-			expect(internals.guessContentType('images/test.png')).toBe('application/octet-stream');
 		});
 	});
 
