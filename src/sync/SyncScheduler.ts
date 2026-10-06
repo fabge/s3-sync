@@ -2,7 +2,12 @@
 
 import { Plugin } from 'obsidian';
 import { SyncEngine } from './SyncEngine';
-import { cloneSettings, S3SyncSettings, SyncResult } from '../types';
+import {
+	cloneSettings,
+	S3SyncSettings,
+	SyncProgressCallback,
+	SyncResult,
+} from '../types';
 
 export class SyncScheduler {
     private intervalId: number | null = null;
@@ -10,6 +15,7 @@ export class SyncScheduler {
     private settings: S3SyncSettings;
 
     private onSyncStart?: () => void;
+    private onSyncProgress?: SyncProgressCallback;
     private onSyncComplete?: (result: SyncResult) => void;
     constructor(
         private plugin: Plugin,
@@ -21,9 +27,11 @@ export class SyncScheduler {
 
 	setCallbacks(callbacks: {
 		onSyncStart?: () => void;
+		onSyncProgress?: SyncProgressCallback;
 		onSyncComplete?: (result: SyncResult) => void;
 	}): void {
 		this.onSyncStart = callbacks.onSyncStart;
+		this.onSyncProgress = callbacks.onSyncProgress;
 		this.onSyncComplete = callbacks.onSyncComplete;
     }
 
@@ -62,7 +70,7 @@ export class SyncScheduler {
 
         this.onSyncStart?.();
 
-		const result = await this.syncEngine.sync();
+		const result = await this.syncEngine.sync(this.onSyncProgress);
 		this.onSyncComplete?.(result);
 		return result;
 	}

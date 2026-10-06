@@ -7,7 +7,12 @@ jest.mock('../../src/sync/SyncEngine', () => ({
 import { Plugin } from 'obsidian';
 import { SyncScheduler } from '../../src/sync/SyncScheduler';
 import { SyncEngine } from '../../src/sync/SyncEngine';
-import { DEFAULT_SETTINGS, S3SyncSettings, SyncResult } from '../../src/types';
+import {
+	DEFAULT_SETTINGS,
+	S3SyncSettings,
+	SyncProgressCallback,
+	SyncResult,
+} from '../../src/types';
 
 interface MockPlugin {
 	registerInterval: jest.Mock<number, [number]>;
@@ -15,7 +20,7 @@ interface MockPlugin {
 
 interface MockSyncEngine {
 	isInProgress: jest.Mock<boolean, []>;
-	sync: jest.Mock<Promise<SyncResult>, []>;
+	sync: jest.Mock<Promise<SyncResult>, [SyncProgressCallback?]>;
 }
 
 interface SchedulerContext {
@@ -193,6 +198,7 @@ describe('SyncScheduler', () => {
 		it('calls onSyncStart before syncing and onSyncComplete after a successful sync', async () => {
 			const { scheduler, syncEngineMocks } = createSchedulerContext();
 			const events: string[] = [];
+			const progressCallback: SyncProgressCallback = jest.fn();
 			const result = createSyncResult({ filesUploaded: 2 });
 			syncEngineMocks.sync.mockImplementation(async () => {
 				events.push('sync');
@@ -203,6 +209,7 @@ describe('SyncScheduler', () => {
 				onSyncStart: () => {
 					events.push('start');
 				},
+				onSyncProgress: progressCallback,
 				onSyncComplete: (syncResult: SyncResult) => {
 					events.push(`complete:${syncResult.filesUploaded}`);
 				},
@@ -211,6 +218,7 @@ describe('SyncScheduler', () => {
 			await scheduler.triggerSync();
 
 			expect(events).toEqual(['start', 'sync', 'complete:2']);
+			expect(syncEngineMocks.sync).toHaveBeenCalledWith(progressCallback);
 		});
 
 		it('returns the SyncResult on success and null when the sync is skipped', async () => {

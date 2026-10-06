@@ -18,6 +18,10 @@
 	color: var(--text-accent);
 }
 
+.s3-sync-status.is-syncing .s3-sync-icon {
+	animation: s3-sync-spin 1.2s linear infinite;
+}
+
 .s3-sync-status.is-conflicts,
 .s3-sync-status.is-error {
 	color: var(--text-error);
@@ -25,4 +29,21 @@
 
 .s3-sync-status.is-disabled {
 	color: var(--text-muted);
+}
+
+.s3-sync-conflict-paths {
+	max-height: 16em;
+	overflow: auto;
+}
+
+.s3-sync-conflict-actions {
+	display: flex;
+	gap: 0.75em;
+	justify-content: flex-end;
+	margin-top: 1em;
+}
+
+@keyframes s3-sync-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
 }

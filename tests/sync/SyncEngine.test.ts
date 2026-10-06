@@ -244,7 +244,7 @@ describe('SyncEngine', () => {
 
 			await context.engine.sync();
 
-			expect(context.executor.execute).toHaveBeenCalledWith(items);
+			expect(context.executor.execute).toHaveBeenCalledWith(items, undefined);
 		});
 	});
 

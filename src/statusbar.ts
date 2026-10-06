@@ -17,12 +17,17 @@ const SYNC_STATUS_SPEC: Record<SyncStatus, StatusIndicatorSpec> = {
 
 export class StatusBar {
 	private statusBarEl: HTMLElement | null = null;
+	private iconEl: HTMLElement | null = null;
+	private textEl: HTMLElement | null = null;
+	private renderedStatus: SyncStatus | null = null;
+	private renderFrameId: number | null = null;
 
 	private syncState: SyncState = {
 		status: 'disabled',
 		lastSyncTime: null,
 		conflictCount: 0,
 		lastError: null,
+		progress: null,
 	};
 
 	constructor(private plugin: Plugin, private actionHandler: () => void) {}
@@ -32,8 +37,11 @@ export class StatusBar {
 		this.statusBarEl.addClasses(['s3-sync-status', 'mod-clickable']);
 		this.statusBarEl.tabIndex = 0;
 		this.statusBarEl.setAttr('role', 'button');
-		this.statusBarEl.addEventListener('click', this.actionHandler);
-		this.statusBarEl.addEventListener('keydown', (event) => {
+		// Created once so progress renders don't restart the spinner animation.
+		this.iconEl = this.statusBarEl.createSpan({ cls: 's3-sync-icon' });
+		this.textEl = this.statusBarEl.createSpan({ cls: 's3-sync-text' });
+		this.plugin.registerDomEvent(this.statusBarEl, 'click', this.actionHandler);
+		this.plugin.registerDomEvent(this.statusBarEl, 'keydown', (event) => {
 			if (event.key === 'Enter' || event.key === ' ') {
 				event.preventDefault();
 				this.actionHandler();
@@ -44,26 +52,54 @@ export class StatusBar {
 
 	updateSyncState(state: Partial<SyncState>): void {
 		this.syncState = { ...this.syncState, ...state };
-		this.update();
+		this.scheduleUpdate();
 	}
 
 	destroy(): void {
+		if (this.renderFrameId !== null) {
+			window.cancelAnimationFrame(this.renderFrameId);
+			this.renderFrameId = null;
+		}
 		this.statusBarEl?.remove();
 		this.statusBarEl = null;
+		this.iconEl = null;
+		this.textEl = null;
+		this.renderedStatus = null;
+	}
+
+	private scheduleUpdate(): void {
+		if (this.renderFrameId !== null) return;
+
+		this.renderFrameId = window.requestAnimationFrame(() => {
+			this.renderFrameId = null;
+			this.update();
+		});
 	}
 
 	private update(): void {
-		const statusBarEl = this.statusBarEl;
-		if (!statusBarEl) return;
+		const { statusBarEl, iconEl, textEl } = this;
+		if (!statusBarEl || !iconEl || !textEl) return;
 
-		const spec = SYNC_STATUS_SPEC[this.syncState.status];
-		statusBarEl.className =
-			`status-bar-item plugin-s3-sync mod-clickable s3-sync-status is-${this.syncState.status}`;
-		statusBarEl.empty();
-		setIcon(statusBarEl.createSpan({ cls: 's3-sync-icon' }), spec.icon);
-		const count = this.syncState.status === 'conflicts' ? ` ${this.syncState.conflictCount}` : '';
-		statusBarEl.createSpan({ cls: 's3-sync-text', text: ` ${spec.label}${count}` });
+		const status = this.syncState.status;
+		const spec = SYNC_STATUS_SPEC[status];
+		if (status !== this.renderedStatus) {
+			if (this.renderedStatus) statusBarEl.removeClass(`is-${this.renderedStatus}`);
+			statusBarEl.addClass(`is-${status}`);
+			setIcon(iconEl, spec.icon);
+			this.renderedStatus = status;
+		}
+		const count = status === 'conflicts' ? ` ${this.syncState.conflictCount}` : '';
+		textEl.setText(` ${this.getStatusText(spec.label)}${count}`);
 		setTooltip(statusBarEl, this.getTooltipContent());
+	}
+
+	private getStatusText(defaultLabel: string): string {
+		const progress = this.syncState.progress;
+		if (this.syncState.status !== 'syncing' || !progress) {
+			return defaultLabel;
+		}
+
+		return `Syncing ${progress.completed}/${progress.total}`;
 	}
 
 	private getTooltipContent(): string {

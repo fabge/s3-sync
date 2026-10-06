@@ -7,6 +7,7 @@ import {
 	SyncError,
 	SyncPlanItem,
 	SyncResult,
+	SyncProgressCallback,
 	SyncStateRecord,
 	VaultEntry,
 	VaultFile,
@@ -33,7 +34,7 @@ export class SyncExecutor {
 		private journal: SyncJournal,
 	) {}
 
-	async execute(plan: SyncPlanItem[]): Promise<SyncResult> {
+	async execute(plan: SyncPlanItem[], onProgress?: SyncProgressCallback): Promise<SyncResult> {
 		const result: SyncResult = {
 			completedAt: 0,
 			filesUploaded: 0,
@@ -44,9 +45,19 @@ export class SyncExecutor {
 		};
 
 		let errorCount = 0;
+		let completed = 0;
 		let planIndex = 0;
 		const inFlight = new Set<Promise<void>>();
+		// A failing UI callback must not abort execution while items are still in flight.
+		const reportProgress = (): void => {
+			try {
+				onProgress?.({ completed, total: plan.length });
+			} catch (error) {
+				console.error('[S3 Sync] Progress update failed:', error);
+			}
+		};
 
+		if (plan.length > 0) reportProgress();
 		while (planIndex < plan.length || inFlight.size > 0) {
 			while (
 				inFlight.size < MAX_CONCURRENCY &&
@@ -62,7 +73,9 @@ export class SyncExecutor {
 						result.errors.push(this.toSyncError(item.path, item.action, error));
 					})
 					.finally(() => {
+						completed++;
 						inFlight.delete(promise);
+						reportProgress();
 					});
 
 				inFlight.add(promise);

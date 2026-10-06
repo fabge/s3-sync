@@ -1,6 +1,13 @@
 /** Thin sync-cycle orchestrator; planner/executor do the heavy lifting. */
 
-import { cloneSettings, S3SyncSettings, SyncPlanItem, SyncResult, VaultLike } from '../types';
+import {
+	cloneSettings,
+	S3SyncSettings,
+	SyncPlanItem,
+	SyncProgressCallback,
+	SyncResult,
+	VaultLike,
+} from '../types';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncJournal } from './SyncJournal';
 import { SyncPlanner } from './SyncPlanner';
@@ -42,7 +49,7 @@ export class SyncEngine {
 		return this.isSyncing;
 	}
 
-	async sync(): Promise<SyncResult> {
+	async sync(onProgress?: SyncProgressCallback): Promise<SyncResult> {
 		if (this.isSyncing) {
 			throw new Error('Sync already in progress');
 		}
@@ -86,7 +93,7 @@ export class SyncEngine {
 				this.s3Provider,
 				this.journal,
 			);
-			const result = await executor.execute(plan);
+			const result = await executor.execute(plan, onProgress);
 
 			if (result.errors.length === 0) {
 				await this.journal.setMetadata(LAST_SUCCESSFUL_SYNC_KEY, Date.now());

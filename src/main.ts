@@ -8,6 +8,7 @@ import { createObsidianVault } from './vault/ObsidianVault';
 import { validateHiddenPatterns } from './vault/hiddenPaths';
 import { SyncEngine } from './sync/SyncEngine';
 import { SyncScheduler } from './sync/SyncScheduler';
+import { SyncConflictModal } from './sync/SyncConflictModal';
 
 interface PersistedPluginData extends Partial<S3SyncSettings> {
 	journalId?: unknown;
@@ -33,6 +34,7 @@ export default class S3SyncPlugin extends Plugin {
 	private journalId = '';
 	private s3Provider: S3Provider | null = null;
 	private statusBar: StatusBar | null = null;
+	private conflictModal: SyncConflictModal | null = null;
 	private lastConflicts: string[] = [];
 	private syncJournal: SyncJournal | null = null;
 	private syncEngine: SyncEngine | null = null;
@@ -42,9 +44,12 @@ export default class S3SyncPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.s3Provider = new S3Provider(this.settings);
+		this.conflictModal = new SyncConflictModal(this.app, () => {
+			void this.triggerManualSync();
+		});
 		this.statusBar = new StatusBar(this, () => {
 			if (this.lastConflicts.length > 0) {
-				this.showConflictNotice();
+				this.conflictModal?.openFor(this.lastConflicts);
 				return;
 			}
 			void this.triggerManualSync();
@@ -67,7 +72,11 @@ export default class S3SyncPlugin extends Plugin {
 				this.statusBar?.updateSyncState({
 					status: 'syncing',
 					lastError: null,
+					progress: null,
 				});
+			},
+			onSyncProgress: (progress) => {
+				this.statusBar?.updateSyncState({ progress });
 			},
 			onSyncComplete: (result) => {
 				this.lastConflicts = result.conflicts;
@@ -82,6 +91,7 @@ export default class S3SyncPlugin extends Plugin {
 					lastSyncTime: result.completedAt,
 					conflictCount: result.conflicts.length,
 					lastError: result.errors[0]?.message ?? null,
+					progress: null,
 				});
 
 				const nonRecoverableError = result.errors.find((error) => !error.recoverable);
@@ -129,6 +139,8 @@ export default class S3SyncPlugin extends Plugin {
 		this.s3Provider = null;
 		this.statusBar?.destroy();
 		this.statusBar = null;
+		this.conflictModal?.close();
+		this.conflictModal = null;
 	}
 
 	async loadSettings(): Promise<void> {
@@ -212,6 +224,7 @@ export default class S3SyncPlugin extends Plugin {
 				lastSyncTime: null,
 				conflictCount: 0,
 				lastError: null,
+				progress: null,
 			});
 			return;
 		}
@@ -220,6 +233,7 @@ export default class S3SyncPlugin extends Plugin {
 			status: this.lastConflicts.length > 0 ? 'conflicts' : 'idle',
 			conflictCount: this.lastConflicts.length,
 			lastError: null,
+			progress: null,
 		});
 	}
 
@@ -267,19 +281,6 @@ export default class S3SyncPlugin extends Plugin {
 
 		new Notice(
 			`Sync completed: ${filesSynced} file(s) changed — ${result.filesUploaded} uploaded, ${result.filesDownloaded} downloaded, ${result.filesDeleted} deleted`,
-		);
-	}
-
-	private showConflictNotice(): void {
-		const shown = this.lastConflicts.slice(0, 10);
-		const more = this.lastConflicts.length - shown.length;
-		new Notice(
-			`${this.lastConflicts.length} unresolved conflict(s):\n`
-			+ shown.join('\n')
-			+ (more > 0 ? `\n…and ${more} more` : '')
-			+ '\n\nEach one has LOCAL_ and REMOTE_ copies beside it. Keep the version you want '
-			+ 'and delete both copies to resolve.',
-			15_000,
 		);
 	}
 

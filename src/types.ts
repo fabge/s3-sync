@@ -129,11 +129,19 @@ export type SyncStatus =
 	| 'conflicts'
 	| 'disabled';
 
+export interface SyncProgress {
+	completed: number;
+	total: number;
+}
+
+export type SyncProgressCallback = (progress: SyncProgress) => void;
+
 export interface SyncState {
 	status: SyncStatus;
 	lastSyncTime: number | null;
 	conflictCount: number;
 	lastError: string | null;
+	progress: SyncProgress | null;
 }
 
 export interface S3ObjectInfo {

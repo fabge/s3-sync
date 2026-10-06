@@ -28,6 +28,7 @@ import {
 	SyncAction,
 	SyncError,
 	SyncPlanItem,
+	SyncProgress,
 	SyncResult,
 	SyncStateRecord,
 } from '../../src/types';
@@ -334,6 +335,45 @@ describe('SyncExecutor', () => {
 			expect(result.conflicts).toEqual([]);
 			expect(result.completedAt).toBeGreaterThan(0);
 			expect(journal.getAllConflicts).toHaveBeenCalledTimes(1);
+		});
+
+		it('reports progress before execution and after each completed item', async () => {
+			const { executor, internals } = createExecutorContext();
+			const progress: SyncProgress[] = [];
+			jest.spyOn(internals, 'executeItem').mockResolvedValue(undefined);
+
+			await executor.execute(
+				[
+					createPlanItem('upload', { path: 'upload.md' }),
+					createPlanItem('download', { path: 'download.md' }),
+				],
+				(value) => progress.push(value),
+			);
+
+			expect(progress).toEqual([
+				{ completed: 0, total: 2 },
+				{ completed: 1, total: 2 },
+				{ completed: 2, total: 2 },
+			]);
+		});
+
+		it('keeps executing when the progress callback throws', async () => {
+			const { executor, internals } = createExecutorContext();
+			const executeItem = jest.spyOn(internals, 'executeItem').mockResolvedValue(undefined);
+			jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			const result = await executor.execute(
+				[
+					createPlanItem('upload', { path: 'one.md' }),
+					createPlanItem('upload', { path: 'two.md' }),
+				],
+				() => {
+					throw new Error('render failed');
+				},
+			);
+
+			expect(executeItem).toHaveBeenCalledTimes(2);
+			expect(result.errors).toEqual([]);
 		});
 
 		it('dispatches multiple items and increments file counters correctly', async () => {
