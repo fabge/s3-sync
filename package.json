@@ -1,6 +1,6 @@
 {
 	"name": "s3-sync",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"description": "Minimal AWS S3 sync plugin for Obsidian.",
 	"main": "main.js",
 	"type": "module",
